@@ -1,102 +1,127 @@
 # server-manager
 
-A **zero-config control panel for your servers**, driven entirely from the
-command line. You answer a few questions once; server-manager discovers your
-project, provisions it, and remembers everything. You never hand-edit a config
-file.
+**A zero-config control panel for deploying and managing web apps on remote
+Linux servers over SSH — available as a CLI *and* a desktop app.**
 
-```
-server connect prod deploy@1.2.3.4   # register a server (once)
-server add clicketta.site /var/www/clicketta/public
-server update clicketta.site
-server rollback clicketta.site
-```
+Point it at a server, run a wizard once, and you get intelligent zero‑downtime
+deploys, rollbacks, TLS, databases, cron, workers, a security audit, and a
+built‑in terminal. There are no agents to install on the server and no config
+files to hand‑edit — server‑manager probes the box, discovers your project, and
+remembers everything under `/etc/server-manager/` on the server itself.
 
-It runs on **your machine** and manages **remote Linux servers over SSH** — so
-one install can drive many servers. State of record lives on each server under
-`/etc/server-manager/`; your machine keeps only a small server registry under
-`~/.config/server-manager/`.
+Two front‑ends, **one engine**:
+
+| | |
+|---|---|
+| **CLI** (`server …`) | Pure Bash over SSH. Runs anywhere with `bash` + `ssh`. |
+| **Desktop app** (Windows / macOS / Linux) | A Flutter UI that drives the same engine over SSH (pure‑Dart, no Bash on the client) and renders everything live. |
+
+![dashboard](docs/screenshots/02-dashboard.png)
+
+---
+
+## Table of contents
+
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Part A — The CLI](#part-a--the-cli)
+  - [Install](#install)
+  - [Quick start](#quick-start)
+  - [Command reference](#command-reference)
+  - [Examples](#examples)
+  - [Self‑healing deploys](#self-healing-deploys)
+  - [Security audit](#security-audit)
+- [Part B — The desktop app](#part-b--the-desktop-app)
+  - [What the app adds](#what-the-app-adds)
+  - [Architecture](#architecture)
+  - [Build & run](#build--run)
+  - [Demo mode](#demo-mode)
+  - [Screenshots](#screenshots)
+- [The JSON protocol](#the-json-protocol)
+- [Where things live](#where-things-live)
+- [Development](#development)
+- [License](#license)
 
 ---
 
 ## Features
 
-- **Wizard (`server add`)** — asks only what it can't detect, confirms the rest.
-- **Auto-discovery** — Laravel, Symfony, WordPress, Statamic, static sites,
-  Node.js, React, Vue, Nuxt, Next.js, and reverse-proxy apps; plus git
-  remote/branch/commit, PHP version + FPM socket, the JS package manager (from
-  the lockfile), and Laravel specifics (Redis, queue, Horizon, scheduler,
-  Octane).
-- **MariaDB provisioning** — for Laravel/Statamic it installs MariaDB if
-  missing, generates credentials, and writes them into `.env` (or prompts you
-  to paste an `.env` when the project has none). Can also seed the database
-  from a SQL dump during the wizard.
-- **PHP-FPM provisioning** — installs the detected PHP version + common Laravel
-  extensions (and Composer) when it isn't already on the server.
-- **Scheduler & workers** — sets up the Laravel scheduler as a `/etc/cron.d`
-  entry and background workers (`queue:work` or **Horizon**) under supervisor,
-  automatically, and re-applies them on every deploy.
-- **Database import/export** — `server db import`/`export` load a `.sql`/`.sql.gz`
-  into a site's database or dump it out; credentials come from the site's `.env`.
+- **Wizard (`server add`)** — probes the server, auto‑detects the framework
+  (Laravel, Symfony, Statamic, WordPress, static, Node/Next/Nuxt, reverse
+  proxy), and asks only what it can't infer.
 - **Intelligent deploy (`server update`)** — backup → maintenance mode →
-  `git pull` → Composer → frontend build → migrate → cache rebuild → restart
-  services → health check, with a timed report. Brings the site back online
-  automatically if a step fails.
-- **Self-healing deploys** — when a build step fails because a tool is missing
-  (Composer, Node.js, the project's package manager), the deploy provisions it
-  and retries the step once, instead of aborting. The timeline reads
-  `step ✖ → auto-fix ✔ → retry ✔`. See `lib/providers/toolchain.sh`.
-- **Rollback (`server rollback`)** — restores code, database, `.env`,
-  dependencies, caches and services from the pre-deploy snapshot.
+  `git pull` → Composer → frontend build → migrate → cache rebuild → restart →
+  health check, with a timed report. Brings the site back online automatically
+  if a step fails.
+- **Self‑healing deploys** — diagnoses a failed build step and applies a
+  **targeted** fix, then retries: a missing PHP extension installs exactly
+  `php<ver>-<ext>`, a missing Composer/Node/package‑manager is provisioned, etc.
+- **Security audit (`server audit`)** — analyses the server's posture and offers
+  **one‑click fixes** for the issues it finds.
+- **Rollback** — restores code, database, `.env`, dependencies and caches from
+  the pre‑deploy snapshot.
+- **Provisioning** — installs PHP‑FPM (+ common extensions, Composer), MariaDB,
+  the Node toolchain, supervisor workers and the Laravel scheduler as needed.
 - **TLS** — Let's Encrypt via certbot, on by default in the wizard.
-- **Modern CLI UX** — colours, spinners, a final report box; degrades cleanly
-  in non-TTY / CI environments.
+- **Built‑in terminal** (app) — an interactive SSH shell, including a per‑site
+  shell dropped straight into the app directory.
+
+---
+
+## How it works
+
+```
+┌──────────────────────┐        SSH         ┌────────────────────────┐       SSH
+│  You                  │  ───────────────▶  │  Control node (Linux)  │  ───────────▶  managed
+│  • CLI  (bash+ssh)    │   server --json    │  server-manager engine │   per-server   servers
+│  • Desktop app (Dart) │ ◀───────────────   │  (bash)                │ ◀───────────  (targets)
+└──────────────────────┘   NDJSON events     └────────────────────────┘
+```
+
+- The **CLI** runs the engine locally and SSHes out to each managed server.
+- The **app** connects over SSH (pure‑Dart [`dartssh2`], native on Windows) to a
+  Linux **control node** where the engine is installed, and drives it through a
+  machine‑readable [JSON event protocol](#the-json-protocol). The control node
+  SSHes to the managed servers exactly as the CLI does.
+
+State lives on each managed server under `/etc/server-manager/`; you never edit
+it by hand.
+
+---
 
 ## Requirements
 
-**Control machine (where you run `server`):** bash ≥ 3.2 (stock macOS works),
-OpenSSH, `curl`. That's it.
+**Control side (CLI host or app control node):** `bash` ≥ 3.2, OpenSSH client.
+Password auth additionally needs `sshpass`.
 
-**Managed server:** Linux with SSH access. server-manager runs
-**non-interactively**, so it needs either a **root** login or a user with
-**passwordless (NOPASSWD) sudo** — it cannot type a sudo password over SSH.
-`server connect` probes this and tells you if it's missing. Provisioning expects
-`nginx` (and, for PHP apps, `php-fpm`; `certbot` for TLS) to be installable on
-the host.
+**Managed server:** SSH access as root **or** a sudo user with passwordless
+sudo (sudo can't prompt over a non‑interactive channel; `server connect` checks
+this and tells you if it's missing). Debian/Ubuntu (apt) is the primary target;
+RHEL‑family (dnf/yum) is supported on a best‑effort basis.
 
-### Authentication: keys or password
+**Desktop app (to build):** Flutter ≥ 3.27. Platform toolchains as usual
+(Visual Studio for Windows, Xcode for macOS, GTK/clang/cmake/ninja for Linux).
 
-`server connect` tries key-based login first. If that doesn't work it offers to:
+---
 
-1. **Set up key login now** (recommended) — copies your public key to the
-   server after you type the password once; everything afterwards is key-based.
-2. **Use the password every time** — stores the password locally (`chmod 600`)
-   and authenticates each command through `sshpass` (`apt install sshpass`).
+## Part A — The CLI
 
-Force password mode directly with `-p`:
+### Install
 
 ```bash
-server connect main root@157.173.97.190 -p     # prompts for the password
-```
-
-Thanks to SSH connection multiplexing, the password is only used to open the
-first connection of each command; the rest reuse it.
-
-## Install
-
-```bash
-git clone https://github.com/<your-org>/server-manager.git
+git clone https://github.com/regnatech/server-manager.git
 cd server-manager
-./install.sh           # symlinks bin/server onto your PATH
+./install.sh                 # symlinks ./bin/server onto your PATH
+# or: make install
 server help
 ```
 
-## Quickstart
+### Quick start
 
 ```bash
-# 1. Register a server (first one becomes the default).
+# 1. Register a server (probes SSH + sudo). Add -p to use a password.
 server connect prod deploy@203.0.113.10
-#    or with a key / port:
 server connect prod deploy@203.0.113.10:22 -i ~/.ssh/id_ed25519
 
 # 2. Add a site — the wizard discovers and provisions it.
@@ -109,76 +134,232 @@ server update clicketta.site
 server rollback clicketta.site
 ```
 
-## Commands
+### Command reference
 
-| Command | What it does |
+| Command | Description |
 |---|---|
-| `server add [domain] [root]` | Wizard: discover, configure, provision (nginx, DB, TLS). |
-| `server update <site>` | Intelligent, near-zero-downtime deploy with health check. |
-| `server rollback <site> [git-ref]` | Revert the last deploy (code + data) or to a ref. |
-| `server ssl <site>` | Issue / renew the Let's Encrypt certificate. |
-| `server list` | List managed sites, frameworks, TLS and last deploy. |
-| `server import <domain> <root>` | Adopt an already-deployed site (no deploy). |
-| `server logs <site> [nginx\|php\|laravel\|queue] [-n N] [-f]` | Tail remote logs. |
-| `server php <site> [set <ver> \| <args…>]` | Show/switch PHP, or run artisan/php. |
-| `server db import [site] [file]` | Load a `.sql`/`.sql.gz` into a site's database (picks the site if omitted). |
-| `server db export [site] [file]` | Dump a site's database to a local `.sql.gz`. |
-| `server scheduler <site> [status\|on\|off]` | View / enable / disable the Laravel scheduler cron. |
-| `server worker <site> [status\|setup\|restart\|logs\|remove]` | View / manage the queue or Horizon worker. |
-| `server cron <site> [list\|add "<sched>" "<cmd>"\|remove <n>]` | View / add / remove cron jobs for the site. |
-| `server connect <name> user@host[:port] [-i key]` | Register a server. |
+| `server connect <name> user@host[:port] [-i key] [-p]` | Register a server (probes SSH + sudo). |
 | `server use <name>` | Set the default server. |
 | `server servers` | List registered servers. |
+| `server add [domain] [root]` | Wizard: discover, configure, provision (nginx, DB, TLS). |
+| `server update <site>` | Intelligent, near‑zero‑downtime deploy with health check. |
+| `server rollback <site> [git-ref]` | Revert the last deploy (code + data) or to a ref. |
+| `server ssl <site>` | Issue or renew the Let's Encrypt certificate. |
+| `server list` | List managed sites, frameworks, TLS and last deploy. |
+| `server import <domain> <root>` | Adopt an already‑deployed site (no deploy). |
+| `server logs <site> [type]` | Tail remote logs (`nginx`\|`php`\|`laravel`\|`queue`). |
+| `server php <site> [args…]` | Run artisan/php, or show/switch the PHP version. |
+| `server db import\|export [site] [file]` | Import/export a site's database. |
+| `server scheduler <site> [status\|on\|off]` | Laravel scheduler cron. |
+| `server worker <site> [status\|setup\|restart\|logs\|remove]` | Background workers. |
+| `server cron <site> [list\|add "<sched>" "<cmd>"\|remove <n>]` | Custom cron jobs. |
+| `server audit [site]` | Security audit: findings + one‑click fixes. |
+| `server audit fix <id> [site]` | Apply a single audit remediation. |
 
-**Global options:** `--server <name>` (target a specific server), `-y/--yes`
-(assume yes — non-interactive), `--no-color`, `-h/--help`, `-V/--version`.
+**Global options:** `--server <name>` (target a specific server), `-y`/`--yes`
+(non‑interactive), `--no-color`, `-h`/`--help`, `-V`/`--version`.
 
-The target server is the default unless `--server` is given; for site commands
-it is inferred from where the site is registered, so `server update clicketta.site`
-"just works".
+### Examples
 
-## How it works
+```bash
+# Target a non-default server for a one-off command
+server update shop.example.com --server prod
+
+# Tail Laravel logs
+server logs clicketta.site laravel
+
+# Run an artisan command on the remote
+server php clicketta.site artisan migrate --force
+
+# Database
+server db export clicketta.site ./backup.sql.gz
+server db import  clicketta.site ./seed.sql.gz
+
+# Scheduler & workers
+server scheduler clicketta.site on
+server worker    clicketta.site setup
+
+# Custom cron
+server cron clicketta.site add "0 3 * * *" "php artisan backup:run"
+server cron clicketta.site list
+```
+
+### Self‑healing deploys
+
+When a build step fails because something is missing, the deploy **diagnoses the
+error and applies a targeted fix**, then retries the step once instead of
+aborting:
 
 ```
-your machine                       managed server
-────────────                       ──────────────
-bin/server  ──ssh (ControlMaster)──▶ /etc/server-manager/sites/<domain>.conf   (source of truth)
-~/.config/server-manager/            /etc/server-manager/sites/<domain>/deploys/ (history)
-  servers/<name>.conf                /var/backups/server-manager/<domain>/<ts>/  (backups)
-  sites.index  (domain → server)
+✖ Installing Composer dependencies      (laravel/framework requires ext-gd … missing)
+• diagnosing the error…
+✔ Auto-fix: installing PHP extension gd
+✔ Installing Composer dependencies (retry)
 ```
 
-A single SSH ControlMaster connection is reused for all the steps of a command,
-so a multi-step deploy authenticates once and runs fast.
+Covered cases include: missing PHP extension (`ext-*` → installs exactly that
+extension), missing `composer` / `unzip` / `git`, missing Node.js or the
+project's package manager (npm/pnpm/yarn/bun), and Composer OOM (the limit is
+disabled pre‑emptively). Disk‑full (`ENOSPC`) is reported rather than retried.
 
-## The deploy flow (`server update`)
+### Security audit
 
-1. Verify the git repo & a clean working tree.
-2. Back up `.env`, the nginx vhost and the database.
-3. Enable maintenance mode (Laravel).
-4. `git pull --ff-only`.
-5. `composer install --no-dev --optimize-autoloader` (if `composer.json`).
-6. Frontend build with the detected package manager (if `package.json`).
-7. `migrate --force` and rebuild caches (Laravel).
-8. Restart PHP-FPM, supervisor, queue workers, Horizon.
-9. Disable maintenance mode.
-10. Health check (nginx, php-fpm, supervisor, redis, HTTP 200) → timed report.
+```bash
+server audit                 # audit the default server
+server audit prod-site.com   # include site-specific checks
+server audit fix firewall    # apply one fix by id
+```
 
-If any step fails, the site is brought back online and the attempt is recorded
-as a failed deploy; `server rollback` can restore the previous state.
+Checks include: root SSH login, SSH password auth, firewall (ufw), fail2ban,
+automatic security updates, pending security updates, world‑readable `.env`,
+`.env` exposed over HTTP, and missing HTTPS. Each finding reports a severity and
+a recommendation; the fixable ones can be remediated with a single command (or a
+button in the app).
+
+---
+
+## Part B — The desktop app
+
+A native desktop client (Windows‑first; also macOS, Linux, and a web build for
+demos) that drives the same engine and renders everything live.
+
+### What the app adds
+
+- **Guided connect** — SSH key or password, with a "Test connection" check.
+- **Dashboard** — an animated grid of site cards (health, framework, TLS, last
+  deploy).
+- **Live deploy timeline** — every step streams in real time with a spinner →
+  check/cross, durations, and the self‑heal fail→fix→retry shown natively.
+- **Per‑site workspace** — every tool for a site at the top (Overview, Deploy,
+  Cron, Workers, Logs, SSL, Database, **Audit**) with a **shell already
+  connected to that site's server** pinned below.
+- **Security audit UI** — findings grouped by severity, each with a one‑click
+  **Fix** button; the list shrinks as you fix things.
+- **Interactive terminal** — a full xterm terminal over an SSH PTY.
+
+### Architecture
+
+The app is a thin, beautiful client. All logic stays in the Bash engine on the
+control node; the app speaks the [JSON protocol](#the-json-protocol) over SSH:
+
+```
+Flutter (Riverpod • go_router • xterm)
+   └── dartssh2 ──▶ control node ──▶ server --json <command>
+                                     └── NDJSON events ──▶ live UI
+```
+
+### Build & run
+
+The app lives in [`app/`](app/). It needs a Linux **control node** reachable
+over SSH with server‑manager installed (see [Part A](#install)).
+
+```bash
+cd app
+flutter pub get
+
+# Windows
+flutter build windows          # → build/windows/x64/runner/Release/
+# (package as MSIX with the `msix` package if you want an installer)
+
+# macOS
+flutter build macos
+
+# Linux
+flutter build linux            # → build/linux/x64/release/bundle/
+
+# Run during development
+flutter run -d windows         # or -d macos / -d linux
+```
+
+> If you edit a model, regenerate JSON helpers with
+> `dart run build_runner build --delete-conflicting-outputs`.
+
+On first launch, enter your control node's SSH host/user and key (or password),
+or click **Explore demo** to try the UI with canned data and no server.
+
+### Demo mode
+
+The app can run with no server at all — useful for trying it out, for the web
+build, and for screenshots. It's driven by environment variables (native) or a
+query param (web):
+
+| Variable | Effect |
+|---|---|
+| `SM_DEMO=1` (or `?demo=1` on web) | Start connected to a canned in‑app backend. |
+| `SM_ROUTE=/dashboard` | Open directly on a route. |
+| `SM_TAB=audit` | Open a specific site tool (overview\|deploy\|cron\|workers\|logs\|ssl\|database\|audit). |
+| `SM_AUTODEPLOY=1` | Auto‑start a demo deploy so the timeline animates. |
+
+```bash
+# Try the dashboard with demo data
+SM_DEMO=1 SM_ROUTE=/dashboard ./server_manager_ui
+```
+
+### Screenshots
+
+A gallery of all screens (captured from the native Linux build) lives in
+[`docs/screenshots/`](docs/screenshots/). Highlights:
+
+| Live deploy timeline | Security audit |
+|---|---|
+| ![deploy](docs/screenshots/03-deploy.png) | ![audit](docs/screenshots/08-audit.png) |
+
+| Per‑site workspace + shell | Terminal |
+|---|---|
+| ![site](docs/screenshots/05-site.png) | ![terminal](docs/screenshots/07-terminal.png) |
+
+---
+
+## The JSON protocol
+
+`server --json <command>` makes the engine emit one JSON event per line (NDJSON)
+instead of human output, so any client can drive it and render live progress.
+The contract is versioned and documented in
+[`docs/json-protocol.md`](docs/json-protocol.md). In short:
+
+```jsonc
+{"t":"version","contract":"1","version":"0.1.0"}
+{"t":"section","label":"Deploy"}
+{"t":"step_start","id":"s2","label":"Pulling main from origin"}
+{"t":"step_end","id":"s2","ok":true,"dur":1.4}
+{"t":"data","kind":"audit","items":[ /* findings */ ]}
+{"t":"report","title":"Deployed clicketta.site","fields":{ /* … */ }}
+{"t":"done","ok":true}
+```
+
+The `add` wizard uses a two‑phase `--plan` / `--apply --answers <file>` flow so a
+GUI can render the form, collect answers, and run non‑interactively.
+
+---
+
+## Where things live
+
+```
+Control side (CLI host / app control node)        Managed server
+~/.config/server-manager/                          /etc/server-manager/
+  servers/<name>.conf   (connection records)         sites/<domain>.conf   (source of truth)
+  sites.index           (domain → server)            deploys/             (history)
+  config                (global prefs)             /var/backups/server-manager/  (snapshots)
+```
+
+SSH uses OpenSSH ControlMaster multiplexing, so a multi‑step deploy
+authenticates once and runs fast.
+
+---
 
 ## Development
 
 ```bash
-make test     # unit suite (no server needed; runs on bash 3.2)
-make lint     # shellcheck if installed, else bash -n
-make smoke    # full end-to-end test against a throwaway Docker "server"
+make test     # run the unit test suite (pure bash, no dependencies)
+make lint     # shellcheck (or bash -n) every script
+make smoke    # Docker integration test (needs Docker)
 ```
 
-The code is modular: `bin/server` dispatches to `lib/commands/*`, which build on
-`lib/core/*` (ui, ssh, config), `lib/discovery/*`, `lib/deploy/*` and
-`lib/providers/*`. Adding a framework = a detection branch in
-`lib/discovery/framework.sh` + an nginx template.
+The engine is layered: `lib/core/*` (ui, ssh, config, json), `lib/discovery/*`,
+`lib/providers/*`, `lib/deploy/*` and `lib/commands/*`. The app's tests live in
+`app/test/` (`flutter test`).
+
+---
 
 ## License
 
