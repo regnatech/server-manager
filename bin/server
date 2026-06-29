@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+#
+# server — server-manager CLI entrypoint.
+#
+# A zero-config control panel for deploying & managing web apps on remote
+# Linux servers over SSH. Run `server help` for usage.
+#
+# https://github.com/<your-org>/server-manager   (MIT)
+
+set -Eeuo pipefail
+
+SRVMGR_VERSION="0.1.0"
+
+# ---------------------------------------------------------------------------
+# Locate the install root (resolve symlinks so /usr/local/bin/server works).
+# ---------------------------------------------------------------------------
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do
+  _dir="$(cd -P "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  [[ "$_self" != /* ]] && _self="$_dir/$_self"
+done
+SRVMGR_BIN_DIR="$(cd -P "$(dirname "$_self")" && pwd)"
+SRVMGR_ROOT="$(cd -P "$SRVMGR_BIN_DIR/.." && pwd)"
+SRVMGR_LIB="$SRVMGR_ROOT/lib"
+SRVMGR_TEMPLATES="$SRVMGR_ROOT/templates"
+export SRVMGR_ROOT SRVMGR_LIB SRVMGR_TEMPLATES
+
+# ---------------------------------------------------------------------------
+# Source library modules. Order: core first (others depend on it), then the
+# rest. Globs tolerate phases that haven't been built yet.
+# ---------------------------------------------------------------------------
+# shellcheck source=/dev/null
+for _f in "$SRVMGR_LIB"/core/ui.sh "$SRVMGR_LIB"/core/util.sh \
+          "$SRVMGR_LIB"/core/config.sh "$SRVMGR_LIB"/core/ssh.sh \
+          "$SRVMGR_LIB"/core/server_registry.sh; do
+  [[ -f "$_f" ]] && source "$_f"
+done
+for _dir in discovery providers deploy commands; do
+  for _f in "$SRVMGR_LIB/$_dir"/*.sh; do
+    [[ -f "$_f" ]] && source "$_f"
+  done
+done
+unset _f _dir
+
+require_bash
+config_init_local
+
+# ---------------------------------------------------------------------------
+# Global option parsing. Extract flags that may appear anywhere, leaving the
+# command and its positional args in ARGS[].
+# ---------------------------------------------------------------------------
+OPT_SERVER=""
+declare -a ARGS=()
+
+parse_global_args() {
+  while (( $# )); do
+    case "$1" in
+      --server) OPT_SERVER="${2:-}"; shift 2;;
+      --server=*) OPT_SERVER="${1#*=}"; shift;;
+      -y|--yes) export SRVMGR_ASSUME_YES=1; shift;;
+      --no-color) NO_COLOR=1; ui_init_colors; shift;;
+      -h|--help) ARGS=(help); return;;
+      -V|--version) ARGS=(version); return;;
+      --) shift; while (( $# )); do ARGS+=("$1"); shift; done;;
+      *) ARGS+=("$1"); shift;;
+    esac
+  done
+}
+
+# Error trap: report where we failed (helps when a deploy step explodes).
+_on_err() {
+  local rc=$?
+  err "Aborted (exit ${rc})."
+  exit "$rc"
+}
+trap _on_err ERR
+
+usage() {
+  cat >&2 <<EOF
+${C_BOLD}${C_MAGENTA}server-manager${C_RESET} ${C_GREY}v${SRVMGR_VERSION}${C_RESET} — zero-config deploy & control panel over SSH
+
+${C_BOLD}USAGE${C_RESET}
+  server <command> [arguments] [--server <name>] [-y]
+
+${C_BOLD}SITE COMMANDS${C_RESET}
+  add [domain] [root]      Wizard: discover, configure and provision a new site
+  update <site>            Intelligent zero-downtime deploy (pull, build, migrate, restart)
+  rollback <site> [target] Roll back to a previous deploy (default: previous)
+  ssl <site>               Issue or renew the Let's Encrypt certificate
+  list                     List managed sites and their health
+  import <domain> <root>   Adopt an already-deployed site without deploying
+  logs <site> [type]       Tail remote logs (nginx|php|laravel|queue)
+  php <site> [args...]     Run artisan/php on the site, or show/switch PHP version
+
+${C_BOLD}SERVER COMMANDS${C_RESET}
+  connect <name> user@host Register a server (probes SSH + sudo)
+  use <name>               Set the default server
+  servers                  List registered servers
+
+${C_BOLD}GLOBAL OPTIONS${C_RESET}
+  --server <name>          Target a specific server (overrides the default)
+  -y, --yes                Assume "yes" for all confirmations (non-interactive)
+  --no-color               Disable coloured output
+  -h, --help               Show this help
+  -V, --version            Show version
+
+Sites and deploy history live on each server under ${REMOTE_ETC}/.
+You never edit config files by hand — the wizard manages everything.
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+main() {
+  parse_global_args "$@"
+  local cmd="${ARGS[0]:-help}"
+  # Restore the remaining args into $@ (bash-3.2-safe for empty arrays).
+  set -- ${ARGS[@]+"${ARGS[@]}"}
+  if [[ $# -gt 0 ]]; then shift; fi   # drop the command itself
+
+  case "$cmd" in
+    help|"")        usage;;
+    version)        printf 'server-manager %s\n' "$SRVMGR_VERSION";;
+
+    connect)        cmd_server_connect "$@";;
+    use)            cmd_server_use "$@";;
+    servers)        cmd_server_servers "$@";;
+
+    add)            _require_cmd_impl cmd_add "$cmd";      cmd_add "$@";;
+    update)         _require_cmd_impl cmd_update "$cmd";   cmd_update "$@";;
+    rollback)       _require_cmd_impl cmd_rollback "$cmd"; cmd_rollback "$@";;
+    ssl)            _require_cmd_impl cmd_ssl "$cmd";       cmd_ssl "$@";;
+    list)           _require_cmd_impl cmd_list "$cmd";      cmd_list "$@";;
+    import)         _require_cmd_impl cmd_import "$cmd";    cmd_import "$@";;
+    logs)           _require_cmd_impl cmd_logs "$cmd";      cmd_logs "$@";;
+    php)            _require_cmd_impl cmd_php "$cmd";        cmd_php "$@";;
+
+    *)
+      err "Unknown command '${cmd}'."
+      say "Run 'server help' for usage."
+      exit 2;;
+  esac
+}
+
+# Guard for commands whose modules may not be present yet during development.
+_require_cmd_impl() {
+  declare -F "$1" >/dev/null 2>&1 || die "Command '$2' is not available in this build."
+}
+
+main "$@"
