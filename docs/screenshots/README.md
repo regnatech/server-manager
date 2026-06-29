@@ -50,9 +50,12 @@ focus: the commit graph and **Push & Deploy** stack full-width, the 3-pane merge
 conflict resolver collapses to an **Ours/Theirs/Resolution tab bar**, and the
 health gauges stack to one column.
 
-| Git / Push & Deploy | Health (monitoring) | Merge conflicts (tabbed) |
-|---|---|---|
-| ![phone-git](17-phone-git.png) | ![phone-health](18-phone-health.png) | ![phone-merge](19-phone-merge.png) |
+On phones the top-level destinations move to a **bottom navigation bar**
+(Sites · Health · Audit · Terminal · Settings); desktop keeps its app-bar icons.
+
+| Dashboard + bottom nav | Git / Push & Deploy | Health (monitoring) | Merge conflicts (tabbed) |
+|---|---|---|---|
+| ![phone-dashboard](20-phone-dashboard.png) | ![phone-git](17-phone-git.png) | ![phone-health](18-phone-health.png) | ![phone-merge](19-phone-merge.png) |
 
 ## How these were generated
 
