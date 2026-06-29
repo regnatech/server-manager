@@ -17,6 +17,8 @@ SSH_CM_DIR="${SSH_CM_DIR:-$HOME/.ssh}"
 
 # Globals populated by ssh_use_server for the duration of a command.
 _SSH_HOST="" _SSH_USER="" _SSH_PORT="" _SSH_IDENTITY="" _SSH_BECOME="none" _SSH_NAME=""
+# Authentication: key (default) or password (supplied through sshpass).
+_SSH_AUTH="key" _SSH_PASSWORD=""
 
 # ssh_use_server <server-name> — load a server record into the _SSH_* globals.
 ssh_use_server() {
@@ -29,22 +31,41 @@ ssh_use_server() {
   _SSH_PORT="$(kv_get "$file" port)"; _SSH_PORT="${_SSH_PORT:-22}"
   _SSH_IDENTITY="$(kv_get "$file" identity_file)"
   _SSH_BECOME="$(kv_get "$file" become)"; _SSH_BECOME="${_SSH_BECOME:-none}"
+  _SSH_AUTH="$(kv_get "$file" auth)"; _SSH_AUTH="${_SSH_AUTH:-key}"
+  _SSH_PASSWORD="$(kv_get "$file" password)"
   [[ -n "$_SSH_HOST" && -n "$_SSH_USER" ]] || die "Server record '${name}' is incomplete."
 }
 
-# Build the common ssh option array for the currently selected server.
+# Build the common ssh option array AND the launcher (plain ssh, or sshpass for
+# password auth) for the currently selected server. With ControlMaster the
+# password is only actually used to open the master connection; multiplexed
+# commands reuse the socket and never re-prompt.
 _ssh_opts() {
   local sock="$SSH_CM_DIR/cm-srvmgr-%r@%h:%p"
   SSH_OPTS=(
     -o ControlMaster=auto
     -o "ControlPath=${sock}"
-    -o ControlPersist=60s
+    -o ControlPersist=120s
     -o ConnectTimeout="${SRVMGR_SSH_TIMEOUT:-15}"
-    -o BatchMode=yes
     -o StrictHostKeyChecking=accept-new
     -p "$_SSH_PORT"
   )
-  [[ -n "$_SSH_IDENTITY" ]] && SSH_OPTS+=(-i "$_SSH_IDENTITY")
+  SSH_LAUNCHER=(ssh)
+  SCP_LAUNCHER=(scp)
+  if [[ "$_SSH_AUTH" == "password" ]]; then
+    command -v sshpass >/dev/null 2>&1 \
+      || die "Server '${_SSH_NAME}' uses password auth but 'sshpass' is not installed (try: apt install sshpass)."
+    export SSHPASS="$_SSH_PASSWORD"
+    SSH_LAUNCHER=(sshpass -e ssh)
+    SCP_LAUNCHER=(sshpass -e scp)
+    # Force password (don't fall back to a wrong key) but allow keyboard-interactive.
+    SSH_OPTS+=(-o BatchMode=no -o PubkeyAuthentication=no -o "PreferredAuthentications=password,keyboard-interactive")
+  else
+    # Key auth: never block on a password prompt.
+    SSH_OPTS+=(-o BatchMode=yes)
+    [[ -n "$_SSH_IDENTITY" ]] && SSH_OPTS+=(-i "$_SSH_IDENTITY")
+  fi
+  return 0   # never let a false [[ ]] above propagate under set -e
 }
 
 # become_wrap <command-string> — wrap in sudo if the server needs it.
@@ -63,7 +84,7 @@ ssh_exec() {
   local cmd="$1"
   _ssh_opts
   mkdir -p "$SSH_CM_DIR"
-  ssh "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "bash -c $(shq "$cmd")"
+  "${SSH_LAUNCHER[@]}" "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "bash -c $(shq "$cmd")"
 }
 
 # ssh_app_exec <dir> <command-string> — run an application command (composer,
@@ -79,7 +100,7 @@ ssh_sudo() {
   local cmd="$1"
   _ssh_opts
   mkdir -p "$SSH_CM_DIR"
-  ssh "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "$(become_wrap "$cmd")"
+  "${SSH_LAUNCHER[@]}" "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "$(become_wrap "$cmd")"
 }
 
 # ssh_script [--sudo] < heredoc
@@ -93,7 +114,7 @@ ssh_script() {
   mkdir -p "$SSH_CM_DIR"
   local runner="bash -s"
   [[ $sudo -eq 1 && "$_SSH_BECOME" == "sudo" ]] && runner="sudo -n bash -s"
-  ssh "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "$runner"
+  "${SSH_LAUNCHER[@]}" "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "$runner"
 }
 
 # ssh_copy_to <local-path> <remote-path> — scp a file up (reuses the master).
@@ -101,8 +122,8 @@ ssh_copy_to() {
   local src="$1" dst="$2"
   _ssh_opts
   local scp_opts=(-o "ControlPath=$SSH_CM_DIR/cm-srvmgr-%r@%h:%p" -P "$_SSH_PORT")
-  [[ -n "$_SSH_IDENTITY" ]] && scp_opts+=(-i "$_SSH_IDENTITY")
-  scp "${scp_opts[@]}" "$src" "${_SSH_USER}@${_SSH_HOST}:${dst}"
+  [[ "$_SSH_AUTH" != "password" && -n "$_SSH_IDENTITY" ]] && scp_opts+=(-i "$_SSH_IDENTITY")
+  "${SCP_LAUNCHER[@]}" "${scp_opts[@]}" "$src" "${_SSH_USER}@${_SSH_HOST}:${dst}"
 }
 
 # ssh_interactive <command-string>
@@ -112,7 +133,7 @@ ssh_interactive() {
   local cmd="$1"
   _ssh_opts
   mkdir -p "$SSH_CM_DIR"
-  ssh -t "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "bash -lc $(shq "$cmd")"
+  "${SSH_LAUNCHER[@]}" -t "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "bash -lc $(shq "$cmd")"
 }
 
 # ssh_app_interactive <dir> <command-string> — interactive variant scoped to a
@@ -122,7 +143,8 @@ ssh_app_interactive() {
   ssh_interactive "export PATH=\"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$PATH\"; cd $(shq "$dir") && { $cmd ; }"
 }
 
-# ssh_close — drop the master connection for the selected server.
+# ssh_close — drop the master connection for the selected server. This only
+# talks to the local control socket, so it needs no authentication.
 ssh_close() {
   [[ -n "$_SSH_HOST" ]] || return 0
   _ssh_opts

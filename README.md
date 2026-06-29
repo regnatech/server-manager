@@ -52,6 +52,24 @@ OpenSSH, `curl`. That's it.
 `nginx` (and, for PHP apps, `php-fpm`; `certbot` for TLS) to be installable on
 the host.
 
+### Authentication: keys or password
+
+`server connect` tries key-based login first. If that doesn't work it offers to:
+
+1. **Set up key login now** (recommended) — copies your public key to the
+   server after you type the password once; everything afterwards is key-based.
+2. **Use the password every time** — stores the password locally (`chmod 600`)
+   and authenticates each command through `sshpass` (`apt install sshpass`).
+
+Force password mode directly with `-p`:
+
+```bash
+server connect main root@157.173.97.190 -p     # prompts for the password
+```
+
+Thanks to SSH connection multiplexing, the password is only used to open the
+first connection of each command; the rest reuse it.
+
 ## Install
 
 ```bash

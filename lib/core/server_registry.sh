@@ -59,14 +59,86 @@ registry_resolve_for_site() {
   registry_resolve "$override"
 }
 
+# _local_keypair — echo the path to a usable local SSH private key, generating
+# an ed25519 one if the user has none. (pub key is "<path>.pub")
+_local_keypair() {
+  local k
+  for k in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/id_ecdsa"; do
+    [[ -f "$k" && -f "$k.pub" ]] && { printf '%s' "$k"; return 0; }
+  done
+  info "No local SSH key found — generating ~/.ssh/id_ed25519 ..." >&2
+  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+  ssh-keygen -t ed25519 -N '' -f "$HOME/.ssh/id_ed25519" -q >&2 || return 1
+  printf '%s' "$HOME/.ssh/id_ed25519"
+}
+
+# _connect_auth_fallback <name> <file> <user> <host> <port>
+#   Interactively choose how to authenticate when key login failed.
+_connect_auth_fallback() {
+  local name="$1" file="$2" user="$3" host="$4" port="$5"
+  say "" >&2
+  say "  How should server-manager authenticate to ${user}@${host}?" >&2
+  say "    1) Set up key-based login now (enter the password once) ${C_GREY}[recommended]${C_RESET}" >&2
+  say "    2) Use the password for every command ${C_GREY}(stores it locally; needs sshpass)${C_RESET}" >&2
+  say "    3) Cancel" >&2
+  local choice; choice="$(ask "Choose" "1")"
+  case "$choice" in
+    1) _connect_setup_key "$file" "$user" "$host" "$port";;
+    2) _connect_setup_password "$file";;
+    *) info "Cancelled."; return 1;;
+  esac
+}
+
+# _connect_setup_key <file> <user> <host> <port>
+#   Copy the local public key to the server's authorized_keys, prompting for
+#   the password once. Switches the record to key auth afterwards.
+_connect_setup_key() {
+  local file="$1" user="$2" host="$3" port="$4"
+  local key; key="$(_local_keypair)" || { err "Could not obtain an SSH key."; return 1; }
+  local pub; pub="$(cat "$key.pub")"
+
+  info "Installing your public key on ${user}@${host} — you'll be asked for the password once."
+  # ssh reads the password from the TTY; stdin carries the public key.
+  if printf '%s\n' "$pub" | ssh -o PubkeyAuthentication=no -o StrictHostKeyChecking=accept-new \
+        -p "$port" "${user}@${host}" \
+        'install -d -m 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && k="$(cat)" && grep -qxF "$k" ~/.ssh/authorized_keys || printf "%s\n" "$k" >> ~/.ssh/authorized_keys'; then
+    kv_set "$file" auth key
+    kv_set "$file" identity_file "$key"
+    chmod 600 "$file" 2>/dev/null || true
+    ok "Public key installed. Future connections use the key (no password)."
+    return 0
+  fi
+  err "Could not install the key (wrong password, or password login disabled on the server)."
+  return 1
+}
+
+# _connect_setup_password <file>
+#   Store the password and authenticate every command through sshpass.
+_connect_setup_password() {
+  local file="$1"
+  if ! command -v sshpass >/dev/null 2>&1; then
+    err "Password mode needs 'sshpass', which isn't installed."
+    say "  Install it (e.g. 'apt install sshpass' / 'brew install sshpass') or choose key setup."
+    return 1
+  fi
+  warn "The password will be stored in ${file} (chmod 600). Prefer key setup when possible."
+  local pw; pw="$(prompt_secret "SSH password")"
+  [[ -n "$pw" ]] || { err "Empty password."; return 1; }
+  kv_set "$file" auth password
+  kv_set "$file" password "$pw"
+  chmod 600 "$file" 2>/dev/null || true
+  return 0
+}
+
 # ---------------------------------------------------------------------------
-# `server connect <name> user@host[:port] [-i identity]`
+# `server connect <name> user@host[:port] [-i identity] [-p]`
 # ---------------------------------------------------------------------------
 cmd_server_connect() {
-  local name="" target="" identity=""
+  local name="" target="" identity="" force_password=0
   while (( $# )); do
     case "$1" in
       -i|--identity) identity="$2"; shift 2;;
+      -p|--password) force_password=1; shift;;
       -*) die "Unknown option '$1' for 'server connect'.";;
       *)
         if [[ -z "$name" ]]; then name="$1"
@@ -75,16 +147,17 @@ cmd_server_connect() {
         shift;;
     esac
   done
-  [[ -n "$name" && -n "$target" ]] || die "Usage: server connect <name> <user@host[:port]> [-i identity]"
+  [[ -n "$name" && -n "$target" ]] || die "Usage: server connect <name> <user@host[:port]> [-i identity] [-p]"
 
   config_init_local
 
-  # Parse user@host:port
+  # Parse user@host:port  (default user 'root' if only a host is given)
   local user host port=22
   if [[ "$target" == *@* ]]; then
     user="${target%@*}"; host="${target#*@}"
   else
-    die "Target must be in the form user@host (got '${target}')."
+    user="root"; host="$target"
+    info "No user given — assuming 'root'. Use user@host to override."
   fi
   if [[ "$host" == *:* ]]; then
     port="${host##*:}"; host="${host%:*}"
@@ -94,18 +167,38 @@ cmd_server_connect() {
   kv_set "$file" host "$host"
   kv_set "$file" user "$user"
   kv_set "$file" port "$port"
+  kv_set "$file" auth key
   [[ -n "$identity" ]] && kv_set "$file" identity_file "$identity"
+  chmod 600 "$file" 2>/dev/null || true
 
   banner "connect ${name}"
-  info "Probing ${user}@${host}:${port} ..."
-  ssh_use_server "$name"
 
-  local who
-  if ! who="$(ssh_probe)"; then
-    err "Could not establish an SSH connection to ${user}@${host}:${port}."
-    say "  Check the host, your key, and that key-based login is permitted."
-    rm -f "$file"
-    return 1
+  local who=""
+  if [[ "$force_password" == 0 ]]; then
+    info "Probing ${user}@${host}:${port} (key-based) ..."
+    ssh_use_server "$name"
+    who="$(ssh_probe || true)"
+  fi
+
+  if [[ -z "$who" ]]; then
+    local fb_ok=1
+    if [[ "$force_password" == 1 ]]; then
+      _connect_setup_password "$file" || fb_ok=0
+    else
+      warn "Key-based login to ${user}@${host}:${port} didn't work."
+      _connect_auth_fallback "$name" "$file" "$user" "$host" "$port" || fb_ok=0
+    fi
+    if [[ "$fb_ok" == 0 ]]; then
+      rm -f "$file"
+      return 1
+    fi
+    ssh_use_server "$name"
+    who="$(ssh_probe || true)"
+    if [[ -z "$who" ]]; then
+      err "Still could not connect to ${user}@${host}:${port}."
+      rm -f "$file"
+      return 1
+    fi
   fi
   ok "Connected as ${who}."
 

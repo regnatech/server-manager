@@ -94,7 +94,8 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   php <site> [args...]     Run artisan/php on the site, or show/switch PHP version
 
 ${C_BOLD}SERVER COMMANDS${C_RESET}
-  connect <name> user@host Register a server (probes SSH + sudo)
+  connect <name> user@host Register a server (probes SSH + sudo). Add -p to
+                           authenticate by password instead of an SSH key.
   use <name>               Set the default server
   servers                  List registered servers
 
