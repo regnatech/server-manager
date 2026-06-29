@@ -26,9 +26,9 @@ and working-tree status, create branch/tag/PR, a one-click **Push & Deploy**
 (push then deploy), and merge with a three-way conflict resolver built on
 `flutter_code_editor` (Ours / Theirs / editable Resolution, syntax-highlighted).
 
-| Notifications (Settings) |
-|---|
-| ![settings](13-settings.png) |
+| Rich log viewer (type selector · search · live tail) | Notifications (Settings) |
+|---|---|
+| ![logs](14-logs.png) | ![settings](13-settings.png) |
 
 Settings → Notifications wires Slack / Telegram so deploys (and audit findings)
 can post a message on success or failure.
