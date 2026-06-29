@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../screens/add_wizard_screen.dart';
+import '../screens/app_shell.dart';
 import '../screens/connect_screen.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/health_screen.dart';
@@ -61,11 +62,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             _fadeThrough(const ConnectScreen(), state),
       ),
       GoRoute(
-        path: '/dashboard',
-        pageBuilder: (BuildContext context, GoRouterState state) =>
-            _fadeThrough(const DashboardScreen(), state),
-      ),
-      GoRoute(
         path: '/site/:domain',
         pageBuilder: (BuildContext context, GoRouterState state) {
           final String domain = state.pathParameters['domain'] ?? '';
@@ -77,25 +73,41 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (BuildContext context, GoRouterState state) =>
             _fadeThrough(const AddWizardScreen(), state),
       ),
-      GoRoute(
-        path: '/terminal',
-        pageBuilder: (BuildContext context, GoRouterState state) =>
-            _fadeThrough(const TerminalScreen(), state),
-      ),
-      GoRoute(
-        path: '/health',
-        pageBuilder: (BuildContext context, GoRouterState state) =>
-            _fadeThrough(const HealthScreen(), state),
-      ),
-      GoRoute(
-        path: '/audit',
-        pageBuilder: (BuildContext context, GoRouterState state) =>
-            _fadeThrough(const ServerAuditScreen(), state),
-      ),
-      GoRoute(
-        path: '/settings',
-        pageBuilder: (BuildContext context, GoRouterState state) =>
-            _fadeThrough(const SettingsScreen(), state),
+      // The five top-level destinations share a persistent shell. On phones the
+      // shell hangs a bottom NavigationBar under them; on wider layouts it is a
+      // no-op pass-through so the desktop chrome stays unchanged. Routes outside
+      // this shell (/connect, /site/:domain, /add) push full-screen with no
+      // bottom bar.
+      ShellRoute(
+        builder: (BuildContext context, GoRouterState state, Widget child) =>
+            AppShell(location: state.uri.path, child: child),
+        routes: <RouteBase>[
+          GoRoute(
+            path: '/dashboard',
+            pageBuilder: (BuildContext context, GoRouterState state) =>
+                _fadeThrough(const DashboardScreen(), state),
+          ),
+          GoRoute(
+            path: '/health',
+            pageBuilder: (BuildContext context, GoRouterState state) =>
+                _fadeThrough(const HealthScreen(), state),
+          ),
+          GoRoute(
+            path: '/audit',
+            pageBuilder: (BuildContext context, GoRouterState state) =>
+                _fadeThrough(const ServerAuditScreen(), state),
+          ),
+          GoRoute(
+            path: '/terminal',
+            pageBuilder: (BuildContext context, GoRouterState state) =>
+                _fadeThrough(const TerminalScreen(), state),
+          ),
+          GoRoute(
+            path: '/settings',
+            pageBuilder: (BuildContext context, GoRouterState state) =>
+                _fadeThrough(const SettingsScreen(), state),
+          ),
+        ],
       ),
     ],
   );

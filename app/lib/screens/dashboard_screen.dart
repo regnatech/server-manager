@@ -97,18 +97,13 @@ class DashboardScreen extends ConsumerWidget {
                 switch (v) {
                   case 'deploy':
                     _confirmDeployAll(context, ref);
-                  case 'health':
-                    context.go('/health');
-                  case 'audit':
-                    context.go('/audit');
-                  case 'terminal':
-                    context.go('/terminal');
-                  case 'settings':
-                    context.go('/settings');
                   case 'logout':
                     disconnect();
                 }
               },
+              // Health / Audit / Terminal / Settings now live in the phone
+              // bottom navigation bar, so they are omitted here to avoid
+              // duplication; only the actions without a bottom-bar home remain.
               itemBuilder: (BuildContext context) =>
                   const <PopupMenuEntry<String>>[
                 PopupMenuItem<String>(
@@ -118,42 +113,6 @@ class DashboardScreen extends ConsumerWidget {
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(Icons.rocket_launch),
                     title: Text('Deploy all sites'),
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'health',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.monitor_heart_outlined),
-                    title: Text('Server health'),
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'audit',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.shield_outlined),
-                    title: Text('Security audit'),
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'terminal',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.terminal),
-                    title: Text('Terminal'),
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'settings',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.settings_outlined),
-                    title: Text('Settings'),
                   ),
                 ),
                 PopupMenuItem<String>(
