@@ -32,7 +32,7 @@ export SRVMGR_ROOT SRVMGR_LIB SRVMGR_TEMPLATES
 # ---------------------------------------------------------------------------
 # shellcheck source=/dev/null
 for _f in "$SRVMGR_LIB"/core/json.sh "$SRVMGR_LIB"/core/ui.sh "$SRVMGR_LIB"/core/util.sh \
-          "$SRVMGR_LIB"/core/config.sh "$SRVMGR_LIB"/core/ssh.sh \
+          "$SRVMGR_LIB"/core/config.sh "$SRVMGR_LIB"/core/notify.sh "$SRVMGR_LIB"/core/ssh.sh \
           "$SRVMGR_LIB"/core/server_registry.sh; do
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -126,6 +126,7 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   audit fix <id> [site]    Apply a single audit remediation by id
   audit fixall [site]      Apply every auto-fixable finding in one go
   metrics [server]         Health snapshot: CPU, memory, disk, load, services
+  notify <action> …        Notifications: status | set slack|telegram … | test | off
   git <action> <site> …    Git: log|status|branches|checkout|fetch|pull|
                            branch <name>|tag <name>|pr <title>|push [--deploy]|
                            deploy [branch]  (push --deploy runs the deploy)
@@ -186,6 +187,7 @@ main() {
     audit)          _require_cmd_impl cmd_audit "$cmd";      cmd_audit "$@";;
     metrics|health) _require_cmd_impl cmd_metrics "$cmd";    cmd_metrics "$@";;
     git)            _require_cmd_impl cmd_git "$cmd";        cmd_git "$@";;
+    notify)         _require_cmd_impl cmd_notify "$cmd";     cmd_notify "$@";;
 
     *)
       err "Unknown command '${cmd}'."

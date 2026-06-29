@@ -151,6 +151,10 @@ cmd_update() {
     "${sha_after:+To commit   : ${sha_after}}" \
     "Backup      : ${backup_dir}" \
     "Completed in: ${dur}s"
+
+  notify_send "$([[ "$status" == ok ]] && echo success || echo warn)" \
+    "Deploy ${status}: ${domain}" \
+    "Server ${server}${sha_after:+ · ${sha_after}} · ${dur}s" || true
 }
 
 # _upd_ensure_worker <slug> <app_root> <php> <mode> — install supervisor (if
@@ -276,6 +280,7 @@ _update_abort() {
     _UPD_MAINT=0
   fi
   history_record "$domain" "$ts" "$sb" "$sa" "$backup" "failed" "0" >/dev/null 2>&1 || true
+  notify_send failure "Deploy failed: ${domain}" "${msg}" || true
   err "Deploy aborted. A backup was saved at ${backup} — use 'server rollback ${domain}' if needed."
   exit 1
 }

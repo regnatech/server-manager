@@ -16,6 +16,7 @@ export SRVMGR_TEMPLATES="$ROOT/templates"
 
 source "$ROOT/lib/core/json.sh"
 source "$ROOT/lib/core/ui.sh"
+source "$ROOT/lib/core/notify.sh"
 source "$ROOT/lib/core/util.sh"
 source "$ROOT/lib/core/config.sh"
 source "$ROOT/lib/discovery/framework.sh"
@@ -376,6 +377,16 @@ t_eq "node: pm not found → install pnpm"           "$(cat "$TRY/picked")" "pm:
 printf 'npm ERR! ENOSPC: no space left on device\n' >"$DIAGLOG"
 _diagnose_node "$DIAGLOG" >/dev/null 2>&1
 t_eq "node: ENOSPC → no auto-fix (non-zero)"       "$?" 1
+
+# ---------------------------------------------------------------------------
+section_t "notifications (payload builders)"
+t_eq "notify emoji success" "$(_notify_emoji success)" "✅"
+t_eq "notify emoji failure" "$(_notify_emoji failure)" "❌"
+t_eq "notify emoji info"    "$(_notify_emoji whatever)" "ℹ️"
+t_eq "notify format w/ body" "$(_notify_format success 'Deployed' 'on prod')" "$(printf '✅ Deployed\non prod')"
+t_eq "notify format title only" "$(_notify_format failure 'Boom' '')" "❌ Boom"
+t_eq "slack payload escapes"  "$(_notify_slack_payload 'he said "hi"')" '{"text":"he said \"hi\""}'
+t_true "slack payload valid json" json_line_ok "$(_notify_slack_payload 'plain text')"
 
 # ---------------------------------------------------------------------------
 section_t "security audit (parsers + findings)"
