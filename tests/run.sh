@@ -31,6 +31,7 @@ source "$ROOT/lib/providers/toolchain.sh"
 source "$ROOT/lib/commands/update.sh"
 source "$ROOT/lib/commands/audit.sh"
 source "$ROOT/lib/commands/metrics.sh"
+source "$ROOT/lib/commands/git.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -241,6 +242,8 @@ CUR=fix_envexp;  audit_fix_env_exposed example.com >/dev/null 2>&1 || true
 CUR=fix_tokens;  audit_fix_nginx_tokens >/dev/null 2>&1 || true
 CUR=fix_expose;  audit_fix_php_expose >/dev/null 2>&1 || true
 CUR=metrics;     _metrics_gather >/dev/null 2>&1 || true
+CUR=git_run;     _git_run /a "git status" >/dev/null 2>&1 || true
+CUR=git_apply;   _git_apply_stdin /a x.php "data" >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
 
 # ---------------------------------------------------------------------------
@@ -411,6 +414,33 @@ t_eq "uptime parse" "$(_metrics_eval_uptime '1234567.89 9876543.21')" "1234567"
 t_eq "human bytes GB" "$(_metrics_human 2100000000)" "2.0 GB"
 t_eq "uptime human"   "$(_metrics_uptime_human 1234567)" "14d 6h 56m"
 t_eq "section slice"  "$(_metrics_section "$(printf '###LOAD\n0.1 0.2 0.3\n###CPUS\n4\n###END\n')" CPUS)" "4"
+
+# --- git parsers ---
+FS=$'\x1f'
+GLOG="abc123${FS}abc${FS}def456 ghi789${FS}Ada L${FS}2026-06-01${FS}2 days ago${FS} (HEAD -> main, origin/main, tag: v1.4)${FS}Fix the bug"
+GITEMS="$(_git_log_json "$GLOG")"
+t_true "git log: is a json array"   grep -qE '^\[\{.*\}\]$' <<<"$GITEMS"
+t_true "git log: subject kept"      grep -q '"subject":"Fix the bug"' <<<"$GITEMS"
+t_true "git log: two parents"       grep -q '"parents":\["def456","ghi789"\]' <<<"$GITEMS"
+t_true "git log: refs parsed"       grep -q '"refs":\["HEAD -> main","origin/main","tag: v1.4"\]' <<<"$GITEMS"
+t_eq   "git refs empty"             "$(_git_refs_json '')" "[]"
+t_eq   "git refs single"            "$(_git_refs_json ' (origin/main)')" '["origin/main"]'
+
+GSTAT="$(_git_status_json main origin/main 2 1 "$(printf ' M app/Foo.php\n?? new.txt\n')")"
+t_true "git status: branch"         grep -q '"branch":"main"' <<<"$GSTAT"
+t_true "git status: ahead 2"        grep -q '"ahead":2' <<<"$GSTAT"
+t_true "git status: not clean"      grep -q '"clean":false' <<<"$GSTAT"
+t_true "git status: dirty paths"    grep -q '"dirty":\["app/Foo.php","new.txt"\]' <<<"$GSTAT"
+GSTAT_CLEAN="$(_git_status_json main origin/main 0 0 "")"
+t_true "git status: clean when empty" grep -q '"clean":true' <<<"$GSTAT_CLEAN"
+
+GBR="$(_git_branches_json "$(printf 'main%s*\ndevelop%s \norigin/main%s \n' "$FS" "$FS" "$FS")")"
+t_true "git branches: current main"  grep -q '"name":"main","current":true' <<<"$GBR"
+t_true "git branches: remote flag"   grep -q '"name":"origin/main","current":false,"remote":true' <<<"$GBR"
+
+GCONF="$(_git_conflict_item_json app/X.php 'our code' 'their code' '<<<<<<< HEAD')"
+t_true "git conflict item json"      json_line_ok "$GCONF"
+t_true "git conflict keeps ours"     grep -q '"ours":"our code"' <<<"$GCONF"
 
 # Finding registration yields a valid JSON object with a boolean 'fixable'.
 _AUDIT_ITEMS=()

@@ -125,6 +125,9 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   audit [site]             Security audit: findings + one-click fixes
   audit fix <id> [site]    Apply a single audit remediation by id
   metrics [server]         Health snapshot: CPU, memory, disk, load, services
+  git <action> <site> …    Git: log|status|branches|checkout|fetch|pull|
+                           branch <name>|tag <name>|pr <title>|push [--deploy]|
+                           deploy [branch]  (push --deploy runs the deploy)
 
 ${C_BOLD}SERVER COMMANDS${C_RESET}
   connect <name> user@host Register a server (probes SSH + sudo). Add -p to
@@ -181,6 +184,7 @@ main() {
     cron)           _require_cmd_impl cmd_cron "$cmd";       cmd_cron "$@";;
     audit)          _require_cmd_impl cmd_audit "$cmd";      cmd_audit "$@";;
     metrics|health) _require_cmd_impl cmd_metrics "$cmd";    cmd_metrics "$@";;
+    git)            _require_cmd_impl cmd_git "$cmd";        cmd_git "$@";;
 
     *)
       err "Unknown command '${cmd}'."
