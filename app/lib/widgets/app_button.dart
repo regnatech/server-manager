@@ -4,6 +4,11 @@ import '../theme/app_theme.dart';
 
 /// A primary filled button with a tactile press-scale animation and an
 /// optional inline loading spinner.
+///
+/// The primary (non-[tonal]) variant uses a subtle accent gradient
+/// ([Palette.accentGradient]) with a soft glow that strengthens on hover and
+/// press, so the main action reads as lit rather than flat. Tonal buttons stay
+/// calm (a flat secondary-container fill).
 class AppButton extends StatefulWidget {
   const AppButton({
     super.key,
@@ -28,6 +33,7 @@ class AppButton extends StatefulWidget {
 
 class _AppButtonState extends State<AppButton> {
   bool _pressed = false;
+  bool _hovered = false;
 
   bool get _enabled => widget.onPressed != null && !widget.loading;
 
@@ -62,7 +68,20 @@ class _AppButtonState extends State<AppButton> {
             backgroundColor: scheme.secondaryContainer,
             foregroundColor: scheme.onSecondaryContainer,
           )
-        : const ButtonStyle();
+        : FilledButton.styleFrom(
+            // The gradient is painted by the wrapping container; keep the
+            // button itself transparent so the gradient shows through, but
+            // preserve the proper on-accent foreground/ink.
+            backgroundColor: Colors.transparent,
+            foregroundColor: scheme.onSecondary,
+            shadowColor: Colors.transparent,
+          );
+
+    final Widget button = FilledButton(
+      style: style,
+      onPressed: _enabled ? widget.onPressed : null,
+      child: child,
+    );
 
     return Listener(
       onPointerDown: (_) {
@@ -74,16 +93,65 @@ class _AppButtonState extends State<AppButton> {
       onPointerCancel: (_) {
         if (_pressed) setState(() => _pressed = false);
       },
-      child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: AppMotion.fast,
-        curve: AppMotion.standard,
-        child: FilledButton(
-          style: style,
-          onPressed: _enabled ? widget.onPressed : null,
-          child: child,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: AnimatedScale(
+          scale: _pressed ? 0.96 : 1.0,
+          duration: AppMotion.fast,
+          curve: AppMotion.standard,
+          child: widget.tonal
+              ? button
+              : _GradientShell(
+                  enabled: _enabled,
+                  glow: _pressed ? 0.42 : (_hovered ? 0.28 : 0.16),
+                  child: button,
+                ),
         ),
       ),
+    );
+  }
+}
+
+/// Paints the accent gradient + soft glow behind a transparent [FilledButton]
+/// so the primary action reads as lit. Desaturates when disabled.
+class _GradientShell extends StatelessWidget {
+  const _GradientShell({
+    required this.child,
+    required this.enabled,
+    required this.glow,
+  });
+
+  final Widget child;
+  final bool enabled;
+  final double glow;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: AppMotion.fast,
+      curve: AppMotion.standard,
+      decoration: BoxDecoration(
+        gradient: enabled
+            ? Palette.accentGradient
+            : LinearGradient(
+                colors: <Color>[
+                  Palette.tealDeep.withValues(alpha: 0.4),
+                  Palette.tealDeep.withValues(alpha: 0.4),
+                ],
+              ),
+        borderRadius: BorderRadius.circular(Insets.radiusMd),
+        boxShadow: enabled
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: Palette.teal.withValues(alpha: glow),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : const <BoxShadow>[],
+      ),
+      child: child,
     );
   }
 }

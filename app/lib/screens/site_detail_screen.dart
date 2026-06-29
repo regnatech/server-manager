@@ -18,6 +18,7 @@ import '../transport/cli_event.dart';
 import '../transport/platform.dart';
 import '../widgets/app_button.dart';
 import '../widgets/audit_view.dart';
+import '../widgets/chip_row.dart';
 import '../widgets/deploy_timeline.dart';
 import '../widgets/framework_chip.dart';
 import '../widgets/glass_card.dart';
@@ -272,10 +273,9 @@ class _SiteSummaryStrip extends StatelessWidget {
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   )
-                : Wrap(
-                    spacing: Insets.sm,
-                    runSpacing: Insets.xs,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+                // One swipeable row of meta chips — never line-breaks or
+                // overflows on a narrow screen.
+                : ChipRow(
                     children: <Widget>[
                       _MetaChip(icon: Icons.dns_outlined, label: s.server),
                       _MetaChip(
@@ -362,6 +362,25 @@ class _ToolBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final List<Widget> buttons = <Widget>[
+      for (int i = 0; i < _tools.length; i++)
+        _ToolButton(
+          tool: _tools[i],
+          selected: i == selected,
+          onTap: () => onSelect(i),
+        ),
+    ];
+    // Phone: one swipeable row so the tool selector never line-breaks into a
+    // tall stack. Wider screens keep the wrapping grid of buttons.
+    if (context.isPhone) {
+      return Padding(
+        padding: const EdgeInsets.only(top: Insets.md, bottom: Insets.sm),
+        child: ChipRow(
+          padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+          children: buttons,
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         Insets.lg,
@@ -372,14 +391,7 @@ class _ToolBar extends StatelessWidget {
       child: Wrap(
         spacing: Insets.sm,
         runSpacing: Insets.sm,
-        children: <Widget>[
-          for (int i = 0; i < _tools.length; i++)
-            _ToolButton(
-              tool: _tools[i],
-              selected: i == selected,
-              onTap: () => onSelect(i),
-            ),
-        ],
+        children: buttons,
       ),
     );
   }

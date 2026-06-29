@@ -11,10 +11,16 @@ import '../theme/app_theme.dart';
 import '../theme/breakpoints.dart';
 import '../transport/cli_event.dart';
 import '../widgets/app_button.dart';
+import '../widgets/chip_row.dart';
 import '../widgets/framework_chip.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_dot.dart';
+
+/// Max width a single site card may occupy before the grid adds another
+/// column. Tuned so a phone (~552px usable) shows 2-up, a tablet 3-up and a
+/// wide desktop 4-up, reflowing fluidly as the window resizes.
+const double kSiteCardMaxExtent = 320;
 
 /// The home screen: a staggered, animated grid of site cards with refresh and
 /// an "add site" entry point.
@@ -203,31 +209,25 @@ class _Grid extends StatelessWidget {
           subtitle: 'Tap a card to manage deploys, cron, workers and SSL',
         ),
         const SizedBox(height: Insets.md),
-        LayoutBuilder(
-          builder: (BuildContext context, BoxConstraints c) {
-            // 1 column on phone, 2 on tablet, 3+ on desktop.
-            final int cols = c.maxWidth < Breakpoints.phone
-                ? 1
-                : c.maxWidth < Breakpoints.tablet
-                    ? 2
-                    : (c.maxWidth ~/ 340).clamp(3, 6);
-            return GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: sites.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: cols,
-                mainAxisSpacing: Insets.md,
-                crossAxisSpacing: Insets.md,
-                mainAxisExtent: 168,
-              ),
-              itemBuilder: (BuildContext context, int i) {
-                return _SiteCard(site: sites[i])
-                    .animate(delay: Duration(milliseconds: 60 * i))
-                    .fadeIn(duration: AppMotion.base)
-                    .slideY(begin: 0.12, curve: AppMotion.emphasized);
-              },
-            );
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: sites.length,
+          // Fluidly reflows: cards cap at ~320px wide so a phone shows 2,
+          // a tablet 3, and a wide desktop 4+ — resizing the window reflows
+          // and resizes cards continuously, with no fixed widths.
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: kSiteCardMaxExtent,
+            mainAxisSpacing: Insets.md,
+            crossAxisSpacing: Insets.md,
+            mainAxisExtent: 150,
+          ),
+          itemBuilder: (BuildContext context, int i) {
+            // Entrances settle quickly so screenshots never catch mid-animation.
+            return _SiteCard(site: sites[i])
+                .animate(delay: Duration(milliseconds: 40 * i))
+                .fadeIn(duration: AppMotion.fast)
+                .slideY(begin: 0.10, curve: AppMotion.emphasized);
           },
         ),
       ],
@@ -242,64 +242,97 @@ class _SiteCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    // A faint framework-keyed accent ties the card to its framework chip.
+    final Color accent = FrameworkChip.accentFor(site.framework);
     return GlassCard(
       onTap: () => context.go('/site/${site.domain}'),
-      padding: const EdgeInsets.all(Insets.md),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              StatusDot(health: site.health),
-              const SizedBox(width: Insets.sm),
-              Expanded(
-                child: Hero(
-                  tag: 'site-title-${site.domain}',
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: Text(
-                      site.domain,
-                      style: theme.textTheme.titleMedium,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+      accent: accent,
+      padding: EdgeInsets.zero,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(Insets.radiusLg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            // A thin framework-colored stripe across the top edge.
+            Container(
+              height: 3,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: <Color>[
+                    accent.withValues(alpha: 0.9),
+                    accent.withValues(alpha: 0.25),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(Insets.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      StatusDot(health: site.health),
+                      const SizedBox(width: Insets.sm),
+                      Expanded(
+                        child: Hero(
+                          tag: 'site-title-${site.domain}',
+                          child: Material(
+                            type: MaterialType.transparency,
+                            child: Text(
+                              site.domain,
+                              style: theme.textTheme.titleMedium,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: Insets.xs),
+                      _TlsBadge(tls: site.tls),
+                    ],
                   ),
-                ),
+                  const SizedBox(height: Insets.sm),
+                  // Scrollable so the framework + server chips never overflow
+                  // a narrow 2-up card; least-important chip slides off-edge.
+                  ChipRow(
+                    children: <Widget>[
+                      FrameworkChip(framework: site.framework),
+                      _Pill(label: site.server, color: theme.colorScheme.primary),
+                    ],
+                  ),
+                  const Spacer(),
+                  Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.schedule,
+                        size: 14,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: Insets.xs),
+                      Expanded(
+                        child: Text(
+                          site.lastDeploy ?? 'never deployed',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ),
+                      const SizedBox(width: Insets.xs),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 16,
+                        color: accent,
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              _TlsBadge(tls: site.tls),
-            ],
-          ),
-          const SizedBox(height: Insets.sm),
-          Row(
-            children: <Widget>[
-              FrameworkChip(framework: site.framework),
-              const SizedBox(width: Insets.sm),
-              _Pill(label: site.server, color: theme.colorScheme.primary),
-            ],
-          ),
-          const Spacer(),
-          Row(
-            children: <Widget>[
-              Icon(
-                Icons.schedule,
-                size: 14,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: Insets.xs),
-              Text(
-                site.lastDeploy ?? 'never deployed',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const Spacer(),
-              Icon(
-                Icons.arrow_forward,
-                size: 16,
-                color: theme.colorScheme.primary,
-              ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -353,20 +386,14 @@ class _LoadingGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double w = context.width;
-    final int cols = w < Breakpoints.phone
-        ? 1
-        : w < Breakpoints.tablet
-            ? 2
-            : 3;
     return GridView.builder(
       padding: const EdgeInsets.all(Insets.lg),
       itemCount: 6,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: cols,
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: kSiteCardMaxExtent,
         mainAxisSpacing: Insets.md,
         crossAxisSpacing: Insets.md,
-        mainAxisExtent: 168,
+        mainAxisExtent: 150,
       ),
       itemBuilder: (BuildContext context, int i) {
         return Container(

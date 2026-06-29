@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import '../theme/breakpoints.dart';
 import '../transport/cli_event.dart';
 import 'app_button.dart';
+import 'chip_row.dart';
 import 'glass_card.dart';
 import 'section_header.dart';
 
@@ -359,9 +360,9 @@ class _AuditHeader extends StatelessWidget {
         SectionHeader(title: 'Security audit', subtitle: posture),
         if (counts.isNotEmpty) ...<Widget>[
           const SizedBox(height: Insets.xs),
-          Wrap(
-            spacing: Insets.sm,
-            runSpacing: Insets.xs,
+          // Horizontally scrollable so the severity counts stay on one line
+          // even on a narrow phone, rather than line-breaking.
+          ChipRow(
             children: <Widget>[
               for (final String sev in order)
                 if ((counts[sev] ?? 0) > 0)

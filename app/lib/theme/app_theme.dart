@@ -70,6 +70,35 @@ class Palette {
         return darkTextDim;
     }
   }
+
+  /// The brand accent gradient (teal → deeper teal), used to lift primary
+  /// surfaces (buttons, header bars) above a flat fill. Diagonal so the
+  /// highlight reads top-left.
+  static const LinearGradient accentGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: <Color>[teal, tealDeep],
+  );
+
+  /// The brand "brand axis" gradient (violet → teal) for accent bars / strokes.
+  static const LinearGradient brandGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: <Color>[violet, teal],
+  );
+
+  /// A very low-alpha top-lit sheen layered over a card surface so elevated
+  /// panels feel lit from above. [accent] keys the tint (defaults to [violet]).
+  static LinearGradient cardSheen({Color accent = violet, double alpha = 0.06}) {
+    return LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: <Color>[
+        accent.withValues(alpha: alpha),
+        accent.withValues(alpha: 0.0),
+      ],
+    );
+  }
 }
 
 /// Centralized motion tokens so every animation in the app stays in sync.

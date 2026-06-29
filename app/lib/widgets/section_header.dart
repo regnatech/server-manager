@@ -28,12 +28,14 @@ class SectionHeader extends StatelessWidget {
             width: 4,
             height: 28,
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: <Color>[Palette.violet, Palette.teal],
-              ),
+              gradient: Palette.brandGradient,
               borderRadius: BorderRadius.circular(4),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: Palette.violet.withValues(alpha: 0.45),
+                  blurRadius: 8,
+                ),
+              ],
             ),
           ),
           const SizedBox(width: Insets.md),

@@ -10,7 +10,9 @@ class FrameworkChip extends StatelessWidget {
 
   final String framework;
 
-  Color get _accent {
+  /// The stable accent color for a framework name. Exposed so cards can tint
+  /// themselves to match their framework chip without duplicating the mapping.
+  static Color accentFor(String framework) {
     switch (framework.toLowerCase()) {
       case 'laravel':
         return const Color(0xFFFF2D20);
@@ -31,6 +33,8 @@ class FrameworkChip extends StatelessWidget {
         return Palette.violet;
     }
   }
+
+  Color get _accent => accentFor(framework);
 
   @override
   Widget build(BuildContext context) {
