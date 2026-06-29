@@ -54,9 +54,12 @@ trim() {
 }
 
 # Shell-quote a value for safe interpolation into a remote command string.
+# Wraps in single quotes and replaces every embedded ' with the sequence '\''
+# (close-quote, escaped-quote, re-open-quote). Safe to nest (shq of shq).
 shq() {
   local s="$1"
-  printf "'%s'" "${s//\'/\'\\\'\'}"
+  local q=$'\x27\\\x27\x27'   # the 4 bytes: ' \ ' '
+  printf "'%s'" "${s//\'/$q}"
 }
 
 # Confirm we are running under bash (the control-side code targets 3.2+ so it
