@@ -857,6 +857,9 @@ class _DatabaseTab extends StatelessWidget {
 /// [_autoDeployed]). Lets SM_TAB=audit open onto a populated finding list.
 final Set<String> _autoAudited = <String>{};
 
+/// One-shot guard for the SM_GIT_MERGE demo auto-merge.
+final Set<String> _autoMerged = <String>{};
+
 /// The Security Audit tool: a per-site [AuditView] wired to the site-scoped
 /// `audit <domain>` / `audit fix <id> <domain>` CLI calls. Auto-runs once when
 /// deep-linked via SM_TAB=audit so a screenshot lands on a populated list.
@@ -960,6 +963,13 @@ class _GitTabState extends ConsumerState<_GitTab> {
               .name;
       _loading = false;
     });
+
+    // Demo/screenshot: SM_GIT_MERGE=<branch> auto-runs a merge after load so a
+    // screenshot can land on the conflict-resolution view.
+    final String autoMerge = envVar('SM_GIT_MERGE') ?? '';
+    if (autoMerge.isNotEmpty && _autoMerged.add(widget.domain)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _runMerge(autoMerge));
+    }
   }
 
   /// Re-fetches only the status (after a push the ahead count drops to 0).
@@ -1097,7 +1107,13 @@ class _GitTabState extends ConsumerState<_GitTab> {
           _MergePickerDialog(current: current, branches: options),
     );
     if (branch == null || !mounted) return;
+    await _runMerge(branch);
+  }
 
+  /// Runs `git merge <branch>` and routes the outcome (clean → snackbar;
+  /// conflicts → the conflict-resolution view). Extracted so it can also be
+  /// auto-triggered (SM_GIT_MERGE) for demos/screenshots.
+  Future<void> _runMerge(String branch) async {
     final CliService cli = ref.read(cliServiceProvider);
     List<GitConflict> conflicts = const <GitConflict>[];
     bool clean = false;

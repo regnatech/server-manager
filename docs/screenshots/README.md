@@ -17,6 +17,15 @@ needed). The same Flutter codebase builds for Windows and macOS.
 | **Security audit (server-wide)** — host hardening reachable from the dashboard | ![server-audit](09-server-audit.png) |
 | **Server health** — live CPU / memory / disk gauges, load, uptime, service status | ![health](10-health.png) |
 
+| Git manager — commit graph, branches, Push & Deploy | Merge conflict resolver (code editor) |
+|---|---|
+| ![git](11-git.png) | ![merge](12-merge.png) |
+
+The Git tool gives a GitKraken-style commit graph with ref/tag badges, branch
+and working-tree status, create branch/tag/PR, a one-click **Push & Deploy**
+(push then deploy), and merge with a three-way conflict resolver built on
+`flutter_code_editor` (Ours / Theirs / editable Resolution, syntax-highlighted).
+
 ## How these were generated
 
 ```bash
