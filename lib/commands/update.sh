@@ -73,13 +73,17 @@ cmd_update() {
     sha_after="$(deploy_git_sha "$app_root")"
   fi
 
-  # 7. Composer.
-  step "Installing Composer dependencies" deploy_composer "$app_root" \
+  # 7. Composer. Self-healing: if the step fails (e.g. composer missing), install
+  #    the toolchain and retry once before giving up.
+  _deploy_try "Installing Composer dependencies" "installing Composer" \
+      toolchain_ensure_composer -- deploy_composer "$app_root" \
     || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "composer install failed."
 
   # 8. Frontend build (auto, using the package manager from the lockfile).
+  #    Self-healing: provision Node.js + the package manager on failure, retry.
   if [[ -n "$SITE_NODE_PM" ]]; then
-    step "Building frontend (${SITE_NODE_PM})" deploy_node "$app_root" "$SITE_NODE_PM" \
+    _deploy_try "Building frontend (${SITE_NODE_PM})" "installing Node.js + ${SITE_NODE_PM}" \
+        toolchain_ensure_pm "$SITE_NODE_PM" -- deploy_node "$app_root" "$SITE_NODE_PM" \
       || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Frontend build failed."
   fi
 
@@ -168,6 +172,34 @@ _render_healthcheck() {
       *)    err  "${name}: ${detail}";;
     esac
   done <<<"$1"
+}
+
+# _deploy_try <step-label> <fix-desc> <fix-cmd...> -- <run-cmd...>
+#   Run a deploy step; if it fails, run a remediation (which provisions a
+#   missing prerequisite — composer, Node, a package manager — and is a no-op
+#   when nothing is wrong) and retry the step exactly once. This is what lets a
+#   deploy recover from "composer not found" / "node not found" on its own.
+#
+#   The remediation runs as its own visible step, and the retry as another, so
+#   the timeline reads: step ✖  →  Auto-fix ✔  →  step (retry) ✔ — which the
+#   desktop UI renders natively. Returns the final step's status.
+_deploy_try() {
+  local label="$1" fix_desc="$2"; shift 2
+  local fix=() run=() seen=0 a
+  for a in "$@"; do
+    if [[ "$a" == "--" ]]; then seen=1; continue; fi
+    if (( seen )); then run+=("$a"); else fix+=("$a"); fi
+  done
+
+  if step "$label" "${run[@]}"; then
+    return 0
+  fi
+
+  warn "${label} failed — attempting to self-heal (${fix_desc})…"
+  if ! step "Auto-fix: ${fix_desc}" "${fix[@]}"; then
+    return 1   # could not remediate → let the caller abort
+  fi
+  step "${label} (retry)" "${run[@]}"
 }
 
 # _update_abort <domain> <ts> <sha_before> <sha_after> <backup_dir> <message>

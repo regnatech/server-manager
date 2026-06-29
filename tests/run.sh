@@ -27,6 +27,8 @@ source "$ROOT/lib/providers/nginx.sh"
 source "$ROOT/lib/providers/database.sh"
 source "$ROOT/lib/providers/php.sh"
 source "$ROOT/lib/providers/workers.sh"
+source "$ROOT/lib/providers/toolchain.sh"
+source "$ROOT/lib/commands/update.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -217,6 +219,13 @@ CUR=cronadd;    workers_cron_add clk '0 3 * * *' 'php artisan x' /a >/dev/null 2
 CUR=cronrm;     workers_cron_remove clk 2 >/dev/null 2>&1 || true
 CUR=sitewrite;  printf 'domain=d\nframework=laravel\n' | remote_site_write d >/dev/null 2>&1 || true
 CUR=nginx;      nginx_render d /r laravel /s '' | nginx_install d >/dev/null 2>&1 || true
+CUR=tc_composer; toolchain_ensure_composer >/dev/null 2>&1 || true
+CUR=tc_node;     toolchain_ensure_node >/dev/null 2>&1 || true
+CUR=tc_pm_npm;   toolchain_ensure_pm npm  >/dev/null 2>&1 || true
+CUR=tc_pm_pnpm;  toolchain_ensure_pm pnpm >/dev/null 2>&1 || true
+CUR=tc_pm_yarn;  toolchain_ensure_pm yarn >/dev/null 2>&1 || true
+CUR=tc_pm_bun;   toolchain_ensure_pm bun  >/dev/null 2>&1 || true
+CUR=tc_git;      toolchain_ensure_git >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
 
 # ---------------------------------------------------------------------------
@@ -276,6 +285,48 @@ t_true "report fields"    grep -q '"PHP":"8.3"' <<<"$JOUT"
 ALL_OK=1
 while IFS= read -r _l; do [[ -z "$_l" ]] && continue; json_line_ok "$_l" || ALL_OK=0; done <<<"$JOUT"
 t_eq "all report lines valid" "$ALL_OK" 1
+
+# ---------------------------------------------------------------------------
+section_t "self-healing deploy (_deploy_try: try → fix → retry)"
+
+TRY="$SBOX/try"; mkdir -p "$TRY"
+
+# 1. Happy path: the step succeeds, so the remediation never runs.
+_t_ok()      { return 0; }
+_t_fix_log() { echo ran >>"$TRY/fix"; }
+rm -f "$TRY/fix"
+_deploy_try "ok step" "should not fix" _t_fix_log -- _t_ok >/dev/null 2>&1
+t_eq   "success returns 0"        "$?" 0
+t_false "fix not run on success"  test -f "$TRY/fix"
+
+# 2. Step fails once, remediation makes it pass on retry.
+rm -f "$TRY/healed"
+_t_flaky() { [ -f "$TRY/healed" ]; }      # fails until healed exists
+_t_heal()  { touch "$TRY/healed"; }
+_deploy_try "flaky step" "heal it" _t_heal -- _t_flaky >/dev/null 2>&1
+t_eq   "heal-then-retry returns 0" "$?" 0
+t_true "remediation ran"           test -f "$TRY/healed"
+
+# 3. Remediation itself fails: no retry, surface the failure.
+_t_fail()     { return 1; }
+_t_fix_fail() { return 1; }
+_deploy_try "broken step" "cannot fix" _t_fix_fail -- _t_fail >/dev/null 2>&1
+t_eq "fix failure returns non-zero" "$?" 1
+
+# 4. Remediation runs but the step still fails (not a missing-tool problem).
+_t_fix_noop() { return 0; }
+_deploy_try "still broken" "noop fix" _t_fix_noop -- _t_fail >/dev/null 2>&1
+t_eq "retry still fails returns non-zero" "$?" 1
+
+# 5. Arguments are routed correctly across the -- separator.
+_t_run_args() { [ "$1" = R1 ] && [ "$2" = R2 ]; }   # passes only with right args
+_t_fix_args() { printf '%s,%s' "$1" "$2" >"$TRY/fixargs"; return 0; }
+_deploy_try "arg step" "arg fix" _t_fix_args F1 F2 -- _t_run_args R1 R2 >/dev/null 2>&1
+t_eq "run args routed (succeeds)" "$?" 0
+# Force the fix to run (first attempt fails) to capture its args.
+_t_run_args_fail() { false; }
+_deploy_try "arg step2" "arg fix" _t_fix_args F1 F2 -- _t_run_args_fail >/dev/null 2>&1 || true
+t_eq "fix args routed" "$(cat "$TRY/fixargs" 2>/dev/null)" "F1,F2"
 
 # ---------------------------------------------------------------------------
 printf '\n────────────────────────────\n'

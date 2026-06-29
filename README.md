@@ -42,6 +42,10 @@ one install can drive many servers. State of record lives on each server under
   `git pull` → Composer → frontend build → migrate → cache rebuild → restart
   services → health check, with a timed report. Brings the site back online
   automatically if a step fails.
+- **Self-healing deploys** — when a build step fails because a tool is missing
+  (Composer, Node.js, the project's package manager), the deploy provisions it
+  and retries the step once, instead of aborting. The timeline reads
+  `step ✖ → auto-fix ✔ → retry ✔`. See `lib/providers/toolchain.sh`.
 - **Rollback (`server rollback`)** — restores code, database, `.env`,
   dependencies, caches and services from the pre-deploy snapshot.
 - **TLS** — Let's Encrypt via certbot, on by default in the wizard.
