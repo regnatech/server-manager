@@ -43,6 +43,17 @@ per-release **Rollback**; the Health screen now also shows per-site uptime
 (commits + pending migrations), the dashboard a **Deploy all sites** action, and
 the audit views a **history** of snapshots over time.
 
+## Phone (Android) — responsive layouts
+
+The same app adapts to phone widths. The Git/deploy and monitoring flows are the
+focus: the commit graph and **Push & Deploy** stack full-width, the 3-pane merge
+conflict resolver collapses to an **Ours/Theirs/Resolution tab bar**, and the
+health gauges stack to one column.
+
+| Git / Push & Deploy | Health (monitoring) | Merge conflicts (tabbed) |
+|---|---|---|
+| ![phone-git](17-phone-git.png) | ![phone-health](18-phone-health.png) | ![phone-merge](19-phone-merge.png) |
+
 ## How these were generated
 
 ```bash
