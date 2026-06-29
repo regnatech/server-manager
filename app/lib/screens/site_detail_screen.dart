@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -639,6 +641,22 @@ class _DataListTabState extends ConsumerState<_DataListTab> {
 
 // --- Logs -------------------------------------------------------------------
 
+/// The selectable log types (CLI arg ↔ display label).
+const List<(String, String)> _logTypes = <(String, String)>[
+  ('nginx', 'nginx'),
+  ('php', 'php'),
+  ('laravel', 'laravel'),
+  ('queue', 'queue'),
+];
+
+/// A rich log viewer: a type selector, live case-insensitive search, a live
+/// "tail" toggle and a refresh, over a virtualized monospace log body with
+/// per-line severity coloring and search-term highlighting.
+///
+/// One-shot `logs(domain, type:…)` loads the recent lines on first build and on
+/// type change / refresh. Flipping "Live tail" ON subscribes to
+/// `logsFollow(domain, type:…)` and appends each [LogEvent] as it arrives;
+/// flipping it OFF (or changing type, or disposing) cancels the subscription.
 class _LogsTab extends ConsumerStatefulWidget {
   const _LogsTab({required this.domain});
   final String domain;
@@ -649,59 +667,474 @@ class _LogsTab extends ConsumerStatefulWidget {
 
 class _LogsTabState extends ConsumerState<_LogsTab> {
   final List<String> _lines = <String>[];
+  final ScrollController _scroll = ScrollController();
+  final TextEditingController _search = TextEditingController();
+
+  String _type = 'laravel';
+  String? _file;
+  String _query = '';
   bool _loading = true;
+  bool _live = false;
+
+  /// The active follow subscription when [_live] is on; null otherwise. Managed
+  /// entirely in State and cancelled on dispose / toggle-off / type change.
+  StreamSubscription<CliEvent>? _follow;
 
   @override
   void initState() {
     super.initState();
-    _tail();
+    // Auto-load on first build (one-shot, live OFF) so a screenshot — including
+    // SM_TAB=logs — lands on a populated viewer without interaction.
+    _search.addListener(() {
+      if (_query != _search.text) setState(() => _query = _search.text);
+    });
+    _refresh();
   }
 
-  Future<void> _tail() async {
+  @override
+  void dispose() {
+    _follow?.cancel();
+    _scroll.dispose();
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Visible lines after the case-insensitive search filter.
+  List<String> get _filtered {
+    if (_query.isEmpty) return _lines;
+    final String q = _query.toLowerCase();
+    return <String>[
+      for (final String l in _lines)
+        if (l.toLowerCase().contains(q)) l,
+    ];
+  }
+
+  /// One-shot fetch of the recent lines for the current [_type]. Cancels any
+  /// live tail first (it is re-armed by the toggle, not here).
+  Future<void> _refresh() async {
+    await _follow?.cancel();
+    _follow = null;
+    if (!mounted) return;
+    setState(() {
+      _live = false;
+      _loading = true;
+      _lines.clear();
+    });
     final CliService cli = ref.read(cliServiceProvider);
-    await for (final CliEvent e in cli.logs(widget.domain)) {
-      if (e is LogEvent && mounted) {
-        setState(() => _lines.add(e.msg));
+    await for (final CliEvent e in cli.logs(widget.domain, type: _type)) {
+      if (!mounted) return;
+      if (e is DataEvent && e.kind == 'logs_meta') {
+        _file = e.value?['file']?.toString();
+      } else if (e is DataEvent && e.kind == 'logs') {
+        _file = e.value?['file']?.toString() ?? _file;
+        final List<dynamic> raw =
+            (e.value?['lines'] as List<dynamic>?) ?? const <dynamic>[];
+        final List<String> parsed =
+            raw.map((dynamic l) => l.toString()).toList();
+        setState(() {
+          _lines
+            ..clear()
+            ..addAll(parsed);
+        });
       } else if (e is DoneEvent) {
         break;
       }
     }
-    if (mounted) setState(() => _loading = false);
+    if (!mounted) return;
+    setState(() => _loading = false);
+    _autoScroll();
+  }
+
+  /// Switches the selected log type: cancels any tail, then reloads one-shot.
+  void _selectType(String type) {
+    if (type == _type) return;
+    setState(() => _type = type);
+    _refresh();
+  }
+
+  /// Arms or disarms the live tail. ON → subscribe to [CliService.logsFollow]
+  /// and append each line; OFF → cancel the subscription.
+  void _toggleLive(bool on) {
+    setState(() => _live = on);
+    if (!on) {
+      _follow?.cancel();
+      _follow = null;
+      return;
+    }
+    final CliService cli = ref.read(cliServiceProvider);
+    _follow = cli.logsFollow(widget.domain, type: _type).listen(
+      (CliEvent e) {
+        if (!mounted) return;
+        if (e is DataEvent && e.kind == 'logs_meta') {
+          setState(() => _file = e.value?['file']?.toString() ?? _file);
+        } else if (e is LogEvent) {
+          setState(() => _lines.add(e.msg));
+          _autoScroll();
+        }
+      },
+      onDone: () {
+        if (mounted) setState(() => _live = false);
+        _follow = null;
+      },
+      onError: (_) {
+        if (mounted) setState(() => _live = false);
+        _follow = null;
+      },
+    );
+  }
+
+  /// Jumps to the bottom on the next frame (new data / first load).
+  void _autoScroll() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final List<String> lines = _filtered;
     return Padding(
-      padding: const EdgeInsets.all(Insets.lg),
+      padding: const EdgeInsets.fromLTRB(Insets.lg, Insets.lg, Insets.lg, Insets.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          const SectionHeader(title: 'Logs', subtitle: 'server --json logs'),
+          SectionHeader(
+            title: 'Logs',
+            subtitle: _file ?? 'server --json logs',
+            trailing: _live
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: Palette.err,
+                          shape: BoxShape.circle,
+                        ),
+                      )
+                          .animate(onPlay: (AnimationController c) => c.repeat(reverse: true))
+                          .fadeIn(duration: AppMotion.slow)
+                          .then()
+                          .fade(begin: 1, end: 0.2, duration: AppMotion.slow),
+                      const SizedBox(width: Insets.sm),
+                      Text(
+                        'LIVE',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: Palette.err,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+          const SizedBox(height: Insets.sm),
+          _LogsToolbar(
+            type: _type,
+            onType: _selectType,
+            search: _search,
+            live: _live,
+            onLive: _toggleLive,
+            onRefresh: _loading ? null : _refresh,
+            loading: _loading,
+          ),
           const SizedBox(height: Insets.sm),
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(Insets.md),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: BorderRadius.circular(Insets.radiusMd),
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outline,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(Insets.radiusMd),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Palette.darkBg,
+                  borderRadius: BorderRadius.circular(Insets.radiusMd),
+                  border: Border.all(
+                    color: theme.colorScheme.outline.withValues(alpha: 0.6),
+                  ),
                 ),
+                child: _loading && _lines.isEmpty
+                    ? const Center(child: CircularProgressIndicator())
+                    : lines.isEmpty
+                        ? Center(
+                            child: Text(
+                              _lines.isEmpty
+                                  ? 'No log lines'
+                                  : 'No lines match “$_query”',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: Palette.darkTextDim,
+                              ),
+                            ),
+                          )
+                        : Scrollbar(
+                            controller: _scroll,
+                            child: ListView.builder(
+                              controller: _scroll,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: Insets.md,
+                                vertical: Insets.sm,
+                              ),
+                              itemCount: lines.length,
+                              itemBuilder: (BuildContext context, int i) =>
+                                  _LogLine(
+                                number: i + 1,
+                                line: lines[i],
+                                query: _query,
+                              ),
+                            ),
+                          ),
               ),
-              child: _lines.isEmpty && _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ListView.builder(
-                      itemCount: _lines.length,
-                      itemBuilder: (BuildContext context, int i) => Text(
-                        _lines[i],
-                        style: AppTheme.mono(context, size: 12),
-                      ),
-                    ),
+            ),
+          ),
+          const SizedBox(height: Insets.xs),
+          Text(
+            '${lines.length}${_query.isNotEmpty ? ' / ${_lines.length}' : ''} '
+            'line${lines.length == 1 ? '' : 's'}'
+            '${_live ? ' · following' : ''}',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ],
       ),
     );
+  }
+}
+
+/// The Logs toolbar: type segments, a live search field, a live-tail switch and
+/// a refresh button.
+class _LogsToolbar extends StatelessWidget {
+  const _LogsToolbar({
+    required this.type,
+    required this.onType,
+    required this.search,
+    required this.live,
+    required this.onLive,
+    required this.onRefresh,
+    required this.loading,
+  });
+
+  final String type;
+  final ValueChanged<String> onType;
+  final TextEditingController search;
+  final bool live;
+  final ValueChanged<bool> onLive;
+  final VoidCallback? onRefresh;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Wrap(
+      spacing: Insets.md,
+      runSpacing: Insets.sm,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: <Widget>[
+        _TypeSelector(value: type, onChanged: onType),
+        SizedBox(
+          width: 240,
+          child: TextField(
+            controller: search,
+            style: AppTheme.mono(context, size: 12),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Filter lines…',
+              prefixIcon: const Icon(Icons.search, size: 18),
+              suffixIcon: search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      onPressed: search.clear,
+                      tooltip: 'Clear',
+                    ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: Insets.sm,
+                vertical: Insets.sm,
+              ),
+            ),
+          ),
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              Icons.sensors,
+              size: 16,
+              color: live ? Palette.err : theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Live tail',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: live
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: Insets.xs),
+            Switch(value: live, onChanged: onLive),
+          ],
+        ),
+        IconButton(
+          tooltip: 'Refresh',
+          onPressed: onRefresh,
+          icon: loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh),
+        ),
+      ],
+    );
+  }
+}
+
+/// A segmented selector over [_logTypes].
+class _TypeSelector extends StatelessWidget {
+  const _TypeSelector({required this.value, required this.onChanged});
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Color accent = theme.colorScheme.primary;
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(Insets.radiusSm),
+        border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          for (final (String, String) t in _logTypes)
+            Material(
+              color: t.$1 == value
+                  ? accent.withValues(alpha: 0.16)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(Insets.radiusSm - 2),
+              child: InkWell(
+                onTap: () => onChanged(t.$1),
+                borderRadius: BorderRadius.circular(Insets.radiusSm - 2),
+                child: AnimatedContainer(
+                  duration: AppMotion.fast,
+                  curve: AppMotion.standard,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Insets.md,
+                    vertical: 6,
+                  ),
+                  child: Text(
+                    t.$2,
+                    style: AppTheme.mono(
+                      context,
+                      size: 12,
+                      color: t.$1 == value
+                          ? accent
+                          : theme.colorScheme.onSurfaceVariant,
+                    ).copyWith(
+                      fontWeight:
+                          t.$1 == value ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One virtualized log row: a muted line number plus the line, tinted by
+/// severity, with the active search term highlighted.
+class _LogLine extends StatelessWidget {
+  const _LogLine({
+    required this.number,
+    required this.line,
+    required this.query,
+  });
+
+  final int number;
+  final String line;
+  final String query;
+
+  /// Severity tint for a line, or null for the default muted color.
+  static Color? _tint(String line) {
+    final String u = line.toUpperCase();
+    if (u.contains('ERROR') ||
+        u.contains('CRITICAL') ||
+        u.contains('EXCEPTION') ||
+        u.contains('FATAL') ||
+        u.contains(' 500 ')) {
+      return Palette.err;
+    }
+    if (u.contains('WARN')) return Palette.warn;
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color base = _tint(line) ?? Palette.darkText.withValues(alpha: 0.86);
+    final TextStyle style = AppTheme.mono(context, size: 12, color: base)
+        .copyWith(height: 1.3);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SizedBox(
+            width: 36,
+            child: Text(
+              '$number',
+              textAlign: TextAlign.right,
+              style: AppTheme.mono(context, size: 11)
+                  .copyWith(color: Palette.darkTextDim.withValues(alpha: 0.5)),
+            ),
+          ),
+          const SizedBox(width: Insets.sm),
+          Expanded(child: _highlighted(style)),
+        ],
+      ),
+    );
+  }
+
+  /// The line as a [SelectableText.rich] with case-insensitive matches of
+  /// [query] highlighted; plain text when there is no query.
+  Widget _highlighted(TextStyle style) {
+    if (query.isEmpty) {
+      return SelectableText(line, style: style);
+    }
+    final String lower = line.toLowerCase();
+    final String q = query.toLowerCase();
+    final List<TextSpan> spans = <TextSpan>[];
+    int start = 0;
+    while (true) {
+      final int idx = lower.indexOf(q, start);
+      if (idx < 0) {
+        spans.add(TextSpan(text: line.substring(start)));
+        break;
+      }
+      if (idx > start) spans.add(TextSpan(text: line.substring(start, idx)));
+      spans.add(
+        TextSpan(
+          text: line.substring(idx, idx + q.length),
+          style: TextStyle(
+            backgroundColor: Palette.warn.withValues(alpha: 0.35),
+            color: Palette.darkText,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+      start = idx + q.length;
+    }
+    return SelectableText.rich(TextSpan(style: style, children: spans));
   }
 }
 

@@ -603,6 +603,174 @@ class DemoData {
     }
   }
 
+  /// The log file path the demo backend reports for a (domain, type) pair.
+  static String logFile(String domain, String type) {
+    switch (type) {
+      case 'nginx':
+        return '/var/log/nginx/$domain.access.log';
+      case 'php':
+        return '/var/log/php8.3-fpm.log';
+      case 'queue':
+        return '/var/www/$domain/storage/logs/worker.log';
+      case 'laravel':
+      default:
+        return '/var/www/$domain/storage/logs/laravel.log';
+    }
+  }
+
+  /// ~40 realistic recent log lines for the one-shot `logs` view, varying by
+  /// [type] (Laravel app log, nginx access log, php-fpm, queue worker).
+  static List<String> logLines(String domain, String type) {
+    switch (type) {
+      case 'nginx':
+        return <String>[
+          '203.0.113.7 - - [29/Jun/2026:10:12:01 +0000] "GET / HTTP/2.0" 200 8421 "-" "Mozilla/5.0"',
+          '203.0.113.7 - - [29/Jun/2026:10:12:01 +0000] "GET /css/app.css HTTP/2.0" 200 18233 "-" "Mozilla/5.0"',
+          '198.51.100.22 - - [29/Jun/2026:10:12:03 +0000] "POST /checkout HTTP/2.0" 302 0 "https://$domain/cart" "Mozilla/5.0"',
+          '198.51.100.22 - - [29/Jun/2026:10:12:03 +0000] "GET /checkout/success HTTP/2.0" 200 5120 "-" "Mozilla/5.0"',
+          '203.0.113.91 - - [29/Jun/2026:10:12:05 +0000] "GET /api/products HTTP/2.0" 200 44210 "-" "okhttp/4.12"',
+          '203.0.113.91 - - [29/Jun/2026:10:12:06 +0000] "GET /favicon.ico HTTP/2.0" 304 0 "-" "okhttp/4.12"',
+          '45.146.0.18 - - [29/Jun/2026:10:12:08 +0000] "GET /.env HTTP/1.1" 403 153 "-" "curl/8.4.0"',
+          '45.146.0.18 - - [29/Jun/2026:10:12:08 +0000] "GET /wp-login.php HTTP/1.1" 404 209 "-" "curl/8.4.0"',
+          '203.0.113.7 - - [29/Jun/2026:10:12:10 +0000] "GET /dashboard HTTP/2.0" 200 13302 "-" "Mozilla/5.0"',
+          '192.0.2.55 - - [29/Jun/2026:10:12:12 +0000] "POST /api/webhooks/stripe HTTP/2.0" 200 12 "-" "Stripe/1.0"',
+          '203.0.113.7 - - [29/Jun/2026:10:12:14 +0000] "GET /orders/8841 HTTP/2.0" 200 9981 "-" "Mozilla/5.0"',
+          '198.51.100.7 - - [29/Jun/2026:10:12:15 +0000] "GET /health HTTP/1.1" 200 2 "-" "ELB-HealthChecker/2.0"',
+          '203.0.113.7 - - [29/Jun/2026:10:12:18 +0000] "GET /assets/app.js HTTP/2.0" 200 220148 "-" "Mozilla/5.0"',
+          '203.0.113.44 - - [29/Jun/2026:10:12:20 +0000] "GET /search?q=tickets HTTP/2.0" 200 6620 "-" "Mozilla/5.0"',
+          '198.51.100.22 - - [29/Jun/2026:10:12:21 +0000] "GET /api/products/214 HTTP/2.0" 500 482 "-" "okhttp/4.12"',
+          '203.0.113.7 - - [29/Jun/2026:10:12:24 +0000] "GET / HTTP/2.0" 200 8421 "-" "Mozilla/5.0"',
+          '192.0.2.55 - - [29/Jun/2026:10:12:26 +0000] "POST /api/webhooks/stripe HTTP/2.0" 200 12 "-" "Stripe/1.0"',
+          '203.0.113.7 - - [29/Jun/2026:10:12:28 +0000] "GET /orders HTTP/2.0" 200 11203 "-" "Mozilla/5.0"',
+          '45.146.0.18 - - [29/Jun/2026:10:12:30 +0000] "GET /admin HTTP/1.1" 403 153 "-" "curl/8.4.0"',
+          '203.0.113.7 - - [29/Jun/2026:10:12:33 +0000] "GET /logout HTTP/2.0" 302 0 "-" "Mozilla/5.0"',
+        ];
+      case 'php':
+        return <String>[
+          '[29-Jun-2026 10:11:40] NOTICE: fpm is running, pid 1442',
+          '[29-Jun-2026 10:11:40] NOTICE: ready to handle connections',
+          '[29-Jun-2026 10:12:03] WARNING: [pool www] server reached pm.max_children setting (10), consider raising it',
+          '[29-Jun-2026 10:12:05] NOTICE: [pool www] child 4821 started',
+          '[29-Jun-2026 10:12:21] WARNING: [pool www] child 4719, script \'/var/www/$domain/public/index.php\' (request: "GET /api/products/214") execution timed out (31.02 sec), terminating',
+          '[29-Jun-2026 10:12:21] WARNING: [pool www] child 4719 exited on signal 15 (SIGTERM) after 902.41 seconds from start',
+          '[29-Jun-2026 10:12:21] NOTICE: [pool www] child 4901 started',
+          '[29-Jun-2026 10:12:48] NOTICE: [pool www] child 4602 exited with code 0 after 1810.55 seconds from start',
+          '[29-Jun-2026 10:12:48] NOTICE: [pool www] child 4977 started',
+        ];
+      case 'queue':
+        return <String>[
+          '[2026-06-29 10:11:31] production.INFO: Processing App\\Jobs\\SendOrderConfirmation',
+          '[2026-06-29 10:11:31] production.INFO: Processed  App\\Jobs\\SendOrderConfirmation',
+          '[2026-06-29 10:11:44] production.INFO: Processing App\\Jobs\\GenerateInvoicePdf',
+          '[2026-06-29 10:11:46] production.INFO: Processed  App\\Jobs\\GenerateInvoicePdf',
+          '[2026-06-29 10:12:02] production.INFO: Processing App\\Jobs\\SyncInventory',
+          '[2026-06-29 10:12:09] production.ERROR: Failed   App\\Jobs\\SyncInventory',
+          '[2026-06-29 10:12:09] production.ERROR: GuzzleHttp\\Exception\\ConnectException: cURL error 28: Operation timed out after 10001 ms',
+          '   at /var/www/$domain/vendor/guzzlehttp/guzzle/src/Handler/CurlFactory.php:211',
+          '   at /var/www/$domain/app/Jobs/SyncInventory.php:48',
+          '[2026-06-29 10:12:09] production.WARNING: App\\Jobs\\SyncInventory will be retried (attempt 2/3)',
+          '[2026-06-29 10:12:24] production.INFO: Processing App\\Jobs\\SyncInventory',
+          '[2026-06-29 10:12:27] production.INFO: Processed  App\\Jobs\\SyncInventory',
+          '[2026-06-29 10:12:40] production.INFO: Processing App\\Jobs\\SendOrderConfirmation',
+          '[2026-06-29 10:12:41] production.INFO: Processed  App\\Jobs\\SendOrderConfirmation',
+        ];
+      case 'laravel':
+      default:
+        return <String>[
+          '[2026-06-29 10:11:58] production.INFO: schedule:run completed in 0.42s',
+          '[2026-06-29 10:12:01] production.INFO: User authenticated {"user_id":4821,"ip":"203.0.113.7"}',
+          '[2026-06-29 10:12:02] production.DEBUG: Cache hit for key products.featured',
+          '[2026-06-29 10:12:03] production.INFO: Order placed {"order_id":8841,"total":129.00,"currency":"USD"}',
+          '[2026-06-29 10:12:03] production.INFO: Dispatched App\\Jobs\\SendOrderConfirmation onto queue [default]',
+          '[2026-06-29 10:12:04] production.WARNING: Slow query (1842ms): select * from `orders` where `status` = ? order by `created_at` desc',
+          '[2026-06-29 10:12:06] production.INFO: Stripe webhook received {"type":"payment_intent.succeeded","id":"pi_3PqL"}',
+          '[2026-06-29 10:12:08] production.NOTICE: Rate limiter hit for 45.146.0.18 on route api.login',
+          '[2026-06-29 10:12:12] production.DEBUG: Mail queued {"mailable":"OrderShipped","to":"dana@example.com"}',
+          '[2026-06-29 10:12:15] production.INFO: Cache warmed: 214 product entries',
+          '[2026-06-29 10:12:21] production.ERROR: Call to a member function format() on null',
+          '[2026-06-29 10:12:21] production.ERROR: [stacktrace]',
+          '#0 /var/www/$domain/app/Http/Controllers/ProductController.php(88): App\\Support\\Money::display(NULL)',
+          '#1 /var/www/$domain/vendor/laravel/framework/src/Illuminate/Routing/Controller.php(54): App\\Http\\Controllers\\ProductController->show(214)',
+          '#2 /var/www/$domain/vendor/laravel/framework/src/Illuminate/Routing/ControllerDispatcher.php(43): Illuminate\\Routing\\Controller->callAction()',
+          '#3 {main}',
+          '[2026-06-29 10:12:22] production.CRITICAL: Uncaught TypeError thrown while rendering /api/products/214',
+          '[2026-06-29 10:12:24] production.INFO: Exception reported to Sentry {"event_id":"a1b2c3d4"}',
+          '[2026-06-29 10:12:26] production.INFO: Stripe webhook received {"type":"charge.refunded","id":"ch_3PqM"}',
+          '[2026-06-29 10:12:28] production.DEBUG: Session regenerated for user 4821',
+          '[2026-06-29 10:12:30] production.WARNING: Deprecated config value mail.driver; use mail.default',
+          '[2026-06-29 10:12:31] production.INFO: User logged out {"user_id":4821}',
+          '[2026-06-29 10:12:33] production.INFO: schedule:run completed in 0.39s',
+          '[2026-06-29 10:12:36] production.DEBUG: Cache hit for key settings.global',
+          '[2026-06-29 10:12:38] production.INFO: Health check GET / -> 200 in 86ms',
+          '[2026-06-29 10:12:40] production.INFO: Order placed {"order_id":8842,"total":58.50,"currency":"USD"}',
+          '[2026-06-29 10:12:40] production.INFO: Dispatched App\\Jobs\\SendOrderConfirmation onto queue [default]',
+          '[2026-06-29 10:12:42] production.DEBUG: Eager loaded relations [items, customer] for order 8842',
+          '[2026-06-29 10:12:44] production.WARNING: Low stock for SKU TIX-GA-2026 (3 remaining)',
+          '[2026-06-29 10:12:46] production.INFO: Invalidated cache tag [products]',
+          '[2026-06-29 10:12:48] production.INFO: Backup snapshot scheduled for 03:00',
+          '[2026-06-29 10:12:50] production.DEBUG: Queue size default=2 mail=0',
+          '[2026-06-29 10:12:52] production.INFO: Stripe webhook received {"type":"payout.paid","id":"po_3PqN"}',
+          '[2026-06-29 10:12:54] production.NOTICE: Feature flag checkout_v2 enabled for 5% of traffic',
+          '[2026-06-29 10:12:56] production.INFO: User authenticated {"user_id":5012,"ip":"203.0.113.44"}',
+          '[2026-06-29 10:12:58] production.DEBUG: Cache hit for key products.featured',
+          '[2026-06-29 10:13:00] production.INFO: schedule:run completed in 0.41s',
+          '[2026-06-29 10:13:02] production.INFO: Order placed {"order_id":8843,"total":212.75,"currency":"USD"}',
+          '[2026-06-29 10:13:04] production.INFO: Cache warmed: 214 product entries',
+        ];
+    }
+  }
+
+  /// A handful of live-tail lines for the demo `logs -f` follow stream, by type.
+  static List<String> logTail(String domain, String type) {
+    switch (type) {
+      case 'nginx':
+        return <String>[
+          '203.0.113.7 - - [29/Jun/2026:10:13:06 +0000] "GET /orders HTTP/2.0" 200 11203 "-" "Mozilla/5.0"',
+          '198.51.100.22 - - [29/Jun/2026:10:13:08 +0000] "POST /checkout HTTP/2.0" 302 0 "-" "Mozilla/5.0"',
+          '45.146.0.18 - - [29/Jun/2026:10:13:10 +0000] "GET /.git/config HTTP/1.1" 403 153 "-" "curl/8.4.0"',
+          '203.0.113.91 - - [29/Jun/2026:10:13:12 +0000] "GET /api/products HTTP/2.0" 200 44210 "-" "okhttp/4.12"',
+          '192.0.2.55 - - [29/Jun/2026:10:13:14 +0000] "POST /api/webhooks/stripe HTTP/2.0" 200 12 "-" "Stripe/1.0"',
+          '203.0.113.7 - - [29/Jun/2026:10:13:16 +0000] "GET /dashboard HTTP/2.0" 200 13302 "-" "Mozilla/5.0"',
+          '198.51.100.22 - - [29/Jun/2026:10:13:18 +0000] "GET /api/products/214 HTTP/2.0" 500 482 "-" "okhttp/4.12"',
+          '203.0.113.44 - - [29/Jun/2026:10:13:20 +0000] "GET /search?q=tickets HTTP/2.0" 200 6620 "-" "Mozilla/5.0"',
+        ];
+      case 'php':
+        return <String>[
+          '[29-Jun-2026 10:13:05] NOTICE: [pool www] child 4977 started',
+          '[29-Jun-2026 10:13:09] WARNING: [pool www] server reached pm.max_children setting (10)',
+          '[29-Jun-2026 10:13:14] NOTICE: [pool www] child 4602 exited with code 0',
+          '[29-Jun-2026 10:13:18] NOTICE: [pool www] child 5012 started',
+          '[29-Jun-2026 10:13:22] WARNING: [pool www] child 4901 execution timed out (31.0 sec)',
+          '[29-Jun-2026 10:13:23] NOTICE: [pool www] child 5040 started',
+          '[29-Jun-2026 10:13:28] NOTICE: [pool www] child 4977 exited with code 0',
+          '[29-Jun-2026 10:13:31] NOTICE: [pool www] child 5061 started',
+        ];
+      case 'queue':
+        return <String>[
+          '[2026-06-29 10:13:05] production.INFO: Processing App\\Jobs\\SendOrderConfirmation',
+          '[2026-06-29 10:13:06] production.INFO: Processed  App\\Jobs\\SendOrderConfirmation',
+          '[2026-06-29 10:13:12] production.INFO: Processing App\\Jobs\\GenerateInvoicePdf',
+          '[2026-06-29 10:13:14] production.INFO: Processed  App\\Jobs\\GenerateInvoicePdf',
+          '[2026-06-29 10:13:20] production.INFO: Processing App\\Jobs\\SyncInventory',
+          '[2026-06-29 10:13:24] production.ERROR: Failed   App\\Jobs\\SyncInventory (cURL error 28: timed out)',
+          '[2026-06-29 10:13:24] production.WARNING: App\\Jobs\\SyncInventory will be retried (attempt 2/3)',
+          '[2026-06-29 10:13:31] production.INFO: Processed  App\\Jobs\\SyncInventory',
+        ];
+      case 'laravel':
+      default:
+        return <String>[
+          '[2026-06-29 10:13:06] production.INFO: Order placed {"order_id":8844,"total":74.00,"currency":"USD"}',
+          '[2026-06-29 10:13:08] production.DEBUG: Cache hit for key products.featured',
+          '[2026-06-29 10:13:11] production.INFO: Stripe webhook received {"type":"payment_intent.succeeded","id":"pi_3PqP"}',
+          '[2026-06-29 10:13:14] production.WARNING: Slow query (1320ms): select count(*) from `sessions`',
+          '[2026-06-29 10:13:17] production.ERROR: Call to a member function format() on null',
+          '[2026-06-29 10:13:20] production.INFO: User authenticated {"user_id":5012,"ip":"203.0.113.44"}',
+          '[2026-06-29 10:13:23] production.INFO: Cache warmed: 214 product entries',
+          '[2026-06-29 10:13:26] production.INFO: schedule:run completed in 0.40s',
+        ];
+    }
+  }
+
   /// A recorded provisioning run for `add --apply`.
   static List<CliEvent> addApplyEvents(String domain) => <CliEvent>[
         BannerEvent(label: 'Provisioning $domain'),
@@ -740,17 +908,43 @@ class DemoCliService implements CliService {
   }
 
   @override
-  Stream<CliEvent> logs(String domain) async* {
+  Stream<CliEvent> logs(String domain, {String? type, int lines = 200}) async* {
+    final String t = type ?? 'laravel';
+    final String file = DemoData.logFile(domain, t);
     await Future<void>.delayed(_shortGap);
-    for (final String line in <String>[
-      '[06:50:01] production.INFO: schedule:run completed',
-      '[06:48:12] production.WARN: slow query 1.8s on orders',
-      '[06:45:33] production.INFO: cache warmed',
-    ]) {
-      yield LogEvent(level: 'info', msg: line);
-      await Future<void>.delayed(const Duration(milliseconds: 120));
-    }
+    yield DataEvent(
+      kind: 'logs_meta',
+      value: <String, dynamic>{'type': t, 'file': file},
+    );
+    await Future<void>.delayed(_shortGap);
+    final List<String> all = DemoData.logLines(domain, t);
+    yield DataEvent(
+      kind: 'logs',
+      value: <String, dynamic>{
+        'type': t,
+        'file': file,
+        'lines': all.length > lines ? all.sublist(all.length - lines) : all,
+      },
+    );
     yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> logsFollow(String domain, {String? type}) async* {
+    final String t = type ?? 'laravel';
+    final String file = DemoData.logFile(domain, t);
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(
+      kind: 'logs_meta',
+      value: <String, dynamic>{'type': t, 'file': file},
+    );
+    // Emit a burst of tail lines with visible gaps so the live tail appends on
+    // screen, then keep the stream open briefly before completing.
+    for (final String line in DemoData.logTail(domain, t)) {
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      yield LogEvent(level: 'info', msg: line);
+    }
+    await Future<void>.delayed(const Duration(seconds: 2));
   }
 
   @override

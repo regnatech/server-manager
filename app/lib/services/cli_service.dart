@@ -32,8 +32,15 @@ abstract class CliService {
   /// `server --json workers list <domain>` → worker entries.
   Stream<CliEvent> workersList(String domain);
 
-  /// `server --json logs <domain>` → recent log lines.
-  Stream<CliEvent> logs(String domain);
+  /// `server --json logs <domain> [type] -n <lines>` → a `logs_meta`
+  /// [DataEvent] (`value:{type,file}`) then a `logs` [DataEvent]
+  /// (`value:{type,file,lines:[...]}`) then a [DoneEvent].
+  Stream<CliEvent> logs(String domain, {String? type, int lines = 200});
+
+  /// `server --json logs <domain> [type] -f` → a `logs_meta` [DataEvent] then
+  /// an indefinite stream of [LogEvent]s (live tail). Cancel the subscription
+  /// to stop following.
+  Stream<CliEvent> logsFollow(String domain, {String? type});
 
   /// `server --json ssl status <domain>` → certificate info.
   Stream<CliEvent> sslStatus(String domain);
@@ -193,7 +200,22 @@ class LiveCliService implements CliService {
       _stream(<String>['workers', 'list', domain]);
 
   @override
-  Stream<CliEvent> logs(String domain) => _stream(<String>['logs', domain]);
+  Stream<CliEvent> logs(String domain, {String? type, int lines = 200}) =>
+      _stream(<String>[
+        'logs',
+        domain,
+        if (type != null) type,
+        '-n',
+        '$lines',
+      ]);
+
+  @override
+  Stream<CliEvent> logsFollow(String domain, {String? type}) => _stream(<String>[
+        'logs',
+        domain,
+        if (type != null) type,
+        '-f',
+      ]);
 
   @override
   Stream<CliEvent> sslStatus(String domain) =>
