@@ -75,15 +75,16 @@ cmd_update() {
 
   # 7. Composer. Self-healing: if the step fails (e.g. composer missing), install
   #    the toolchain and retry once before giving up.
-  _deploy_try "Installing Composer dependencies" "installing Composer" \
-      toolchain_ensure_composer -- deploy_composer "$app_root" \
+  _deploy_try "Installing Composer dependencies" _diagnose_composer \
+      -- deploy_composer "$app_root" \
     || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "composer install failed."
 
   # 8. Frontend build (auto, using the package manager from the lockfile).
-  #    Self-healing: provision Node.js + the package manager on failure, retry.
+  #    Self-healing: diagnose the failure and provision Node.js / the package
+  #    manager as needed, then retry.
   if [[ -n "$SITE_NODE_PM" ]]; then
-    _deploy_try "Building frontend (${SITE_NODE_PM})" "installing Node.js + ${SITE_NODE_PM}" \
-        toolchain_ensure_pm "$SITE_NODE_PM" -- deploy_node "$app_root" "$SITE_NODE_PM" \
+    _deploy_try "Building frontend (${SITE_NODE_PM})" _diagnose_node \
+        -- deploy_node "$app_root" "$SITE_NODE_PM" \
       || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Frontend build failed."
   fi
 
@@ -174,32 +175,93 @@ _render_healthcheck() {
   done <<<"$1"
 }
 
-# _deploy_try <step-label> <fix-desc> <fix-cmd...> -- <run-cmd...>
-#   Run a deploy step; if it fails, run a remediation (which provisions a
-#   missing prerequisite — composer, Node, a package manager — and is a no-op
-#   when nothing is wrong) and retry the step exactly once. This is what lets a
-#   deploy recover from "composer not found" / "node not found" on its own.
+# _deploy_try <step-label> <diagnoser> -- <run-cmd...>
+#   Run a deploy step; if it fails, hand the captured output to <diagnoser>,
+#   which inspects the error, performs a TARGETED remediation (its own visible
+#   "Auto-fix" step) and returns 0 to request a retry — or non-zero to give up.
+#   The step is retried at most once. This is what lets a deploy recover on its
+#   own from "composer not found", a missing PHP extension, a missing Node /
+#   package manager, etc.
 #
-#   The remediation runs as its own visible step, and the retry as another, so
-#   the timeline reads: step ✖  →  Auto-fix ✔  →  step (retry) ✔ — which the
+#   The timeline reads: step ✖  →  Auto-fix ✔  →  step (retry) ✔ — which the
 #   desktop UI renders natively. Returns the final step's status.
 _deploy_try() {
-  local label="$1" fix_desc="$2"; shift 2
-  local fix=() run=() seen=0 a
+  local label="$1" diagnoser="$2"; shift 2
+  local run=() seen=0 a
   for a in "$@"; do
     if [[ "$a" == "--" ]]; then seen=1; continue; fi
-    if (( seen )); then run+=("$a"); else fix+=("$a"); fi
+    (( seen )) && run+=("$a")
   done
 
-  if step "$label" "${run[@]}"; then
-    return 0
+  local log; log="$(mktemp "${TMPDIR:-/tmp}/srvmgr-diag.XXXXXX")"
+  _UI_STEP_LOGOUT="$log"
+  step "$label" "${run[@]}"; local rc=$?
+  _UI_STEP_LOGOUT=""
+
+  if (( rc == 0 )); then rm -f "$log"; return 0; fi
+
+  warn "${label} failed — diagnosing the error…"
+  if "$diagnoser" "$log"; then
+    rm -f "$log"
+    step "${label} (retry)" "${run[@]}"
+    return $?
+  fi
+  rm -f "$log"
+  return 1   # no remediation matched → let the caller abort
+}
+
+# _diagnose_composer <logfile> — pick a targeted fix for a failed composer step.
+# Reads the captured output and matches known failure signatures. Returns 0
+# (after running an Auto-fix step) to request a retry, non-zero to abort.
+_diagnose_composer() {
+  local out; out="$(cat "$1" 2>/dev/null)"
+
+  # Missing PHP extension: "requires ... ext-gd ...", "the requested PHP
+  # extension intl is missing", "ext-bcmath * -> it is missing".
+  local ext=""
+  ext="$(printf '%s\n' "$out" | grep -oiE 'ext-[a-z0-9_]+' | head -1 | sed 's/^ext-//I')"
+  [[ -z "$ext" ]] && ext="$(printf '%s\n' "$out" | grep -oiE 'PHP extension [a-z0-9_]+' | head -1 | awk '{print $3}')"
+  if [[ -n "$ext" ]]; then
+    step "Auto-fix: installing PHP extension ${ext}" toolchain_ensure_php_ext "$_UPD_PHP" "$ext"
+    return $?
   fi
 
-  warn "${label} failed — attempting to self-heal (${fix_desc})…"
-  if ! step "Auto-fix: ${fix_desc}" "${fix[@]}"; then
-    return 1   # could not remediate → let the caller abort
+  # Missing unzip / zip for prefer-dist.
+  if printf '%s' "$out" | grep -qiE 'unzip|zip extension|install (it|unzip)'; then
+    step "Auto-fix: installing unzip" toolchain_ensure_unzip; return $?
   fi
-  step "${label} (retry)" "${run[@]}"
+
+  # git needed by composer to clone a source dependency.
+  if printf '%s' "$out" | grep -qiE 'git was not found|git: (command )?not found'; then
+    step "Auto-fix: installing git" toolchain_ensure_git; return $?
+  fi
+
+  # composer itself missing.
+  if printf '%s' "$out" | grep -qiE 'composer:? (command )?not found|composer not found'; then
+    step "Auto-fix: installing Composer" toolchain_ensure_composer; return $?
+  fi
+
+  # Fallback: ensure the composer toolchain (covers most missing-tool cases).
+  step "Auto-fix: ensuring Composer toolchain" toolchain_ensure_composer
+}
+
+# _diagnose_node <logfile> — pick a targeted fix for a failed frontend build.
+_diagnose_node() {
+  local out; out="$(cat "$1" 2>/dev/null)" pm="${SITE_NODE_PM:-npm}"
+
+  # Out of disk — not something we can auto-fix.
+  if printf '%s' "$out" | grep -qiE 'ENOSPC|no space left'; then
+    err "Build failed: the server is out of disk space. Cannot auto-fix."
+    return 1
+  fi
+
+  # node / package manager missing.
+  if printf '%s' "$out" | grep -qiE "not found|command not found|No such file|ENOENT.*${pm}"; then
+    step "Auto-fix: installing Node.js + ${pm}" toolchain_ensure_pm "$pm"; return $?
+  fi
+
+  # Fallback: ensure the package manager (and Node) are present.
+  step "Auto-fix: ensuring ${pm}" toolchain_ensure_pm "$pm"
 }
 
 # _update_abort <domain> <ts> <sha_before> <sha_after> <backup_dir> <message>

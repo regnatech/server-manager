@@ -104,6 +104,7 @@ step() {
       errf=",$(json_kv_string err "$(tail -n 20 "$logfile")")"
     fi
     ui_emit "{\"t\":\"step_end\",$(json_kv_string id "$id"),$(json_kv_raw ok "$ok_b"),$(json_kv_raw dur "$dur")${errf}}"
+    [[ -n "${_UI_STEP_LOGOUT:-}" ]] && cp "$logfile" "$_UI_STEP_LOGOUT" 2>/dev/null || true
     rm -f "$logfile"
     return $rc
   fi
@@ -139,6 +140,7 @@ step() {
       printf '%s' "$C_RESET" >&2
     fi
   fi
+  [[ -n "${_UI_STEP_LOGOUT:-}" ]] && cp "$logfile" "$_UI_STEP_LOGOUT" 2>/dev/null || true
   rm -f "$logfile"
   return $rc
 }

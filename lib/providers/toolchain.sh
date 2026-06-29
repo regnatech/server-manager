@@ -119,6 +119,48 @@ echo "\$pm installed: \$(\$pm --version 2>/dev/null | head -1)"
 EOF
 }
 
+# toolchain_ensure_php_ext <php-version> <ext> — install a single PHP extension
+# (e.g. gd, intl, bcmath) that Composer reported as missing. Tries the
+# versioned package name first (phpX.Y-ext on Debian) then the generic one.
+toolchain_ensure_php_ext() {
+  local ver="$1" ext="$2"
+  ssh_script --sudo <<EOF
+set -e
+ver=$(shq "$ver"); ext=$(shq "$ext")
+# Normalise a few names Composer uses that differ from package names.
+case "\$ext" in
+  zend-opcache) ext=opcache ;;
+esac
+if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y >/dev/null 2>&1 || true
+  if [ -n "\$ver" ]; then
+    apt-get install -y "php\${ver}-\${ext}" || apt-get install -y "php-\${ext}"
+  else
+    apt-get install -y "php-\${ext}"
+  fi
+elif command -v dnf >/dev/null 2>&1; then dnf install -y "php-\${ext}"
+elif command -v yum >/dev/null 2>&1; then yum install -y "php-\${ext}"
+else
+  echo "no supported package manager to install php-\${ext}" >&2; exit 1
+fi
+php -m 2>/dev/null | grep -iq "^\${ext}\$" && echo "php extension \${ext} installed" || echo "php-\${ext} installed (verify pending)"
+EOF
+}
+
+# toolchain_ensure_unzip — install unzip/zip (Composer prefers-dist needs them).
+toolchain_ensure_unzip() {
+  ssh_script --sudo <<'EOF'
+set -e
+if command -v unzip >/dev/null 2>&1; then echo "unzip already present"; exit 0; fi
+if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y unzip zip
+elif command -v dnf >/dev/null 2>&1; then dnf install -y unzip zip
+elif command -v yum >/dev/null 2>&1; then yum install -y unzip zip
+else echo "no supported package manager to install unzip" >&2; exit 1; fi
+command -v unzip >/dev/null 2>&1 && echo "unzip installed"
+EOF
+}
+
 # toolchain_ensure_git — make sure git is on PATH (install if missing).
 toolchain_ensure_git() {
   ssh_script --sudo <<'EOF'

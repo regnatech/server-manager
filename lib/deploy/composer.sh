@@ -10,6 +10,9 @@ deploy_composer() {
     if command -v composer >/dev/null 2>&1; then COMPOSER=composer;
     elif [ -f composer.phar ]; then COMPOSER="php composer.phar";
     else echo "composer not found on PATH" >&2; exit 1; fi
+    # -1 disables the memory limit: large dependency graphs otherwise OOM with
+    # "Allowed memory size ... exhausted". Cheap to set unconditionally.
+    export COMPOSER_MEMORY_LIMIT=-1
     $COMPOSER install --no-dev --prefer-dist --optimize-autoloader --no-interaction
   '
 }

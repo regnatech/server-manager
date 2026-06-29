@@ -226,6 +226,8 @@ CUR=tc_pm_pnpm;  toolchain_ensure_pm pnpm >/dev/null 2>&1 || true
 CUR=tc_pm_yarn;  toolchain_ensure_pm yarn >/dev/null 2>&1 || true
 CUR=tc_pm_bun;   toolchain_ensure_pm bun  >/dev/null 2>&1 || true
 CUR=tc_git;      toolchain_ensure_git >/dev/null 2>&1 || true
+CUR=tc_phpext;   toolchain_ensure_php_ext 8.3 gd >/dev/null 2>&1 || true
+CUR=tc_unzip;    toolchain_ensure_unzip >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
 
 # ---------------------------------------------------------------------------
@@ -287,46 +289,77 @@ while IFS= read -r _l; do [[ -z "$_l" ]] && continue; json_line_ok "$_l" || ALL_
 t_eq "all report lines valid" "$ALL_OK" 1
 
 # ---------------------------------------------------------------------------
-section_t "self-healing deploy (_deploy_try: try → fix → retry)"
+section_t "self-healing deploy (_deploy_try + diagnosers)"
 
 TRY="$SBOX/try"; mkdir -p "$TRY"
 
-# 1. Happy path: the step succeeds, so the remediation never runs.
-_t_ok()      { return 0; }
-_t_fix_log() { echo ran >>"$TRY/fix"; }
-rm -f "$TRY/fix"
-_deploy_try "ok step" "should not fix" _t_fix_log -- _t_ok >/dev/null 2>&1
-t_eq   "success returns 0"        "$?" 0
-t_false "fix not run on success"  test -f "$TRY/fix"
+# --- _deploy_try control flow (diagnoser receives the captured logfile) ---
 
-# 2. Step fails once, remediation makes it pass on retry.
+# 1. Happy path: the step succeeds, so the diagnoser never runs.
+_t_ok()       { return 0; }
+_t_diag_log() { echo ran >>"$TRY/diag"; return 0; }
+rm -f "$TRY/diag"
+_deploy_try "ok step" _t_diag_log -- _t_ok >/dev/null 2>&1
+t_eq    "success returns 0"          "$?" 0
+t_false "diagnoser not run on success" test -f "$TRY/diag"
+
+# 2. Step fails once; diagnoser remediates so the retry passes.
 rm -f "$TRY/healed"
-_t_flaky() { [ -f "$TRY/healed" ]; }      # fails until healed exists
-_t_heal()  { touch "$TRY/healed"; }
-_deploy_try "flaky step" "heal it" _t_heal -- _t_flaky >/dev/null 2>&1
+_t_flaky()   { [ -f "$TRY/healed" ]; }    # fails until healed exists
+_t_diag_heal() { touch "$TRY/healed"; return 0; }
+_deploy_try "flaky step" _t_diag_heal -- _t_flaky >/dev/null 2>&1
 t_eq   "heal-then-retry returns 0" "$?" 0
 t_true "remediation ran"           test -f "$TRY/healed"
 
-# 3. Remediation itself fails: no retry, surface the failure.
-_t_fail()     { return 1; }
-_t_fix_fail() { return 1; }
-_deploy_try "broken step" "cannot fix" _t_fix_fail -- _t_fail >/dev/null 2>&1
-t_eq "fix failure returns non-zero" "$?" 1
+# 3. Diagnoser declines (returns non-zero): no retry, surface the failure.
+_t_fail()        { return 1; }
+_t_diag_decline() { return 1; }
+_deploy_try "broken step" _t_diag_decline -- _t_fail >/dev/null 2>&1
+t_eq "diagnoser decline returns non-zero" "$?" 1
 
-# 4. Remediation runs but the step still fails (not a missing-tool problem).
-_t_fix_noop() { return 0; }
-_deploy_try "still broken" "noop fix" _t_fix_noop -- _t_fail >/dev/null 2>&1
-t_eq "retry still fails returns non-zero" "$?" 1
+# 4. The diagnoser actually receives the failing step's captured output.
+_t_run_err()  { echo "MARKER_NEEDS_GD ext-gd missing" >&2; return 1; }
+_t_diag_see() { grep -q MARKER_NEEDS_GD "$1" && { touch "$TRY/sawit"; return 0; } || return 1; }
+rm -f "$TRY/sawit"
+_deploy_try "errstep" _t_diag_see -- _t_run_err >/dev/null 2>&1 || true
+t_true "diagnoser receives captured output" test -f "$TRY/sawit"
 
-# 5. Arguments are routed correctly across the -- separator.
-_t_run_args() { [ "$1" = R1 ] && [ "$2" = R2 ]; }   # passes only with right args
-_t_fix_args() { printf '%s,%s' "$1" "$2" >"$TRY/fixargs"; return 0; }
-_deploy_try "arg step" "arg fix" _t_fix_args F1 F2 -- _t_run_args R1 R2 >/dev/null 2>&1
-t_eq "run args routed (succeeds)" "$?" 0
-# Force the fix to run (first attempt fails) to capture its args.
-_t_run_args_fail() { false; }
-_deploy_try "arg step2" "arg fix" _t_fix_args F1 F2 -- _t_run_args_fail >/dev/null 2>&1 || true
-t_eq "fix args routed" "$(cat "$TRY/fixargs" 2>/dev/null)" "F1,F2"
+# --- diagnoser decision logic (stub the installers, assert the choice) ---
+DIAGLOG="$TRY/diag.log"
+toolchain_ensure_php_ext() { echo "php_ext:$2" >"$TRY/picked"; }
+toolchain_ensure_unzip()   { echo "unzip"      >"$TRY/picked"; }
+toolchain_ensure_git()     { echo "git"        >"$TRY/picked"; }
+toolchain_ensure_composer(){ echo "composer"   >"$TRY/picked"; }
+toolchain_ensure_pm()      { echo "pm:$1"      >"$TRY/picked"; }
+
+printf 'Problem 1: laravel/framework requires ext-gd * -> it is missing\n' >"$DIAGLOG"
+_diagnose_composer "$DIAGLOG" >/dev/null 2>&1
+t_eq "composer: requires ext-gd → install gd"     "$(cat "$TRY/picked")" "php_ext:gd"
+
+printf 'the requested PHP extension intl is missing from your system\n' >"$DIAGLOG"
+_diagnose_composer "$DIAGLOG" >/dev/null 2>&1
+t_eq "composer: 'PHP extension intl' → install intl" "$(cat "$TRY/picked")" "php_ext:intl"
+
+printf 'you need to enable the unzip command to use prefer-dist\n' >"$DIAGLOG"
+_diagnose_composer "$DIAGLOG" >/dev/null 2>&1
+t_eq "composer: unzip hint → install unzip"        "$(cat "$TRY/picked")" "unzip"
+
+printf 'composer: command not found\n' >"$DIAGLOG"
+_diagnose_composer "$DIAGLOG" >/dev/null 2>&1
+t_eq "composer: missing binary → install composer" "$(cat "$TRY/picked")" "composer"
+
+printf 'some unrelated failure\n' >"$DIAGLOG"
+_diagnose_composer "$DIAGLOG" >/dev/null 2>&1
+t_eq "composer: fallback → ensure composer"        "$(cat "$TRY/picked")" "composer"
+
+SITE_NODE_PM=pnpm
+printf 'sh: 1: pnpm: not found\n' >"$DIAGLOG"
+_diagnose_node "$DIAGLOG" >/dev/null 2>&1
+t_eq "node: pm not found → install pnpm"           "$(cat "$TRY/picked")" "pm:pnpm"
+
+printf 'npm ERR! ENOSPC: no space left on device\n' >"$DIAGLOG"
+_diagnose_node "$DIAGLOG" >/dev/null 2>&1
+t_eq "node: ENOSPC → no auto-fix (non-zero)"       "$?" 1
 
 # ---------------------------------------------------------------------------
 printf '\n────────────────────────────\n'
