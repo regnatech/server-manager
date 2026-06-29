@@ -94,6 +94,9 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   php <site> [args...]     Run artisan/php on the site, or show/switch PHP version
   db import [site] [file]  Import a .sql/.sql.gz dump into a site's database
   db export [site] [file]  Dump a site's database to a local .sql.gz
+  scheduler <site> [a]     Laravel scheduler cron: status (default) | on | off
+  worker <site> [action]   Workers: status (default) | setup | restart | logs | remove
+  cron <site> [action]     Cron jobs: list (default) | add "<sched>" "<cmd>" | remove <n>
 
 ${C_BOLD}SERVER COMMANDS${C_RESET}
   connect <name> user@host Register a server (probes SSH + sudo). Add -p to
@@ -140,6 +143,9 @@ main() {
     logs)           _require_cmd_impl cmd_logs "$cmd";      cmd_logs "$@";;
     php)            _require_cmd_impl cmd_php "$cmd";        cmd_php "$@";;
     db)             _require_cmd_impl cmd_db "$cmd";         cmd_db "$@";;
+    scheduler)      _require_cmd_impl cmd_scheduler "$cmd";  cmd_scheduler "$@";;
+    worker|workers) _require_cmd_impl cmd_worker "$cmd";     cmd_worker "$@";;
+    cron)           _require_cmd_impl cmd_cron "$cmd";       cmd_cron "$@";;
 
     *)
       err "Unknown command '${cmd}'."

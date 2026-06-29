@@ -119,6 +119,9 @@ server rollback clicketta.site
 | `server php <site> [set <ver> \| <args…>]` | Show/switch PHP, or run artisan/php. |
 | `server db import [site] [file]` | Load a `.sql`/`.sql.gz` into a site's database (picks the site if omitted). |
 | `server db export [site] [file]` | Dump a site's database to a local `.sql.gz`. |
+| `server scheduler <site> [status\|on\|off]` | View / enable / disable the Laravel scheduler cron. |
+| `server worker <site> [status\|setup\|restart\|logs\|remove]` | View / manage the queue or Horizon worker. |
+| `server cron <site> [list\|add "<sched>" "<cmd>"\|remove <n>]` | View / add / remove cron jobs for the site. |
 | `server connect <name> user@host[:port] [-i key]` | Register a server. |
 | `server use <name>` | Set the default server. |
 | `server servers` | List registered servers. |

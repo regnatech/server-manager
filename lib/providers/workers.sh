@@ -92,3 +92,104 @@ supervisorctl update >/dev/null 2>&1 || true
 echo "supervisor \${mode} program installed (user=\${run_user})"
 EOF
 }
+
+# ---------------------------------------------------------------------------
+# Inspection / management (used by the worker / scheduler / cron commands).
+# ---------------------------------------------------------------------------
+
+# workers_status <slug> — supervisorctl status of this site's programs.
+workers_status() {
+  local slug="$1"
+  ssh_sudo "
+    command -v supervisorctl >/dev/null 2>&1 || { echo 'supervisor is not installed'; exit 0; }
+    out=\$(supervisorctl status 2>/dev/null | grep -E \"^$slug-(worker|horizon)\" || true)
+    [ -n \"\$out\" ] && echo \"\$out\" || echo 'no worker configured for this site'
+  "
+}
+
+# workers_restart <slug> — restart this site's supervisor programs.
+workers_restart() {
+  local slug="$1"
+  ssh_sudo "
+    command -v supervisorctl >/dev/null 2>&1 || { echo 'supervisor not installed' >&2; exit 1; }
+    progs=\$(supervisorctl status 2>/dev/null | grep -oE \"^$slug-(worker|horizon)[^ ]*\" | sed 's/:.*//' | sort -u)
+    [ -n \"\$progs\" ] || { echo 'no worker configured for this site' >&2; exit 1; }
+    for p in \$progs; do supervisorctl restart \"\$p\" >/dev/null 2>&1 || true; done
+    echo \"restarted: \$(echo \$progs | tr '\n' ' ')\"
+  "
+}
+
+# workers_remove <slug> — stop and delete this site's supervisor program.
+workers_remove() {
+  local slug="$1"
+  ssh_sudo "
+    conf=/etc/supervisor/conf.d/server-manager-$slug.conf
+    if command -v supervisorctl >/dev/null 2>&1; then
+      supervisorctl stop \"$slug-worker:*\" >/dev/null 2>&1 || true
+      supervisorctl stop \"$slug-horizon\" >/dev/null 2>&1 || true
+    fi
+    rm -f \"\$conf\"
+    supervisorctl reread >/dev/null 2>&1 || true
+    supervisorctl update >/dev/null 2>&1 || true
+    echo 'worker removed'
+  "
+}
+
+# workers_scheduler_status <slug> — show the scheduler cron entry, if present.
+workers_scheduler_status() {
+  local slug="$1"
+  ssh_sudo "f=/etc/cron.d/server-manager-$slug; if [ -f \"\$f\" ]; then grep -v '^#' \"\$f\" | grep -v '^[[:space:]]*\$'; else echo 'scheduler not installed'; fi"
+}
+
+# workers_scheduler_remove <slug>
+workers_scheduler_remove() {
+  local slug="$1"
+  ssh_sudo "rm -f /etc/cron.d/server-manager-$slug && echo 'scheduler cron removed'"
+}
+
+# workers_cron_list <slug> <app_root> — list all server-manager cron entries for
+# the site plus the run user's personal crontab.
+workers_cron_list() {
+  local slug="$1" app_root="$2"
+  ssh_sudo "
+    app_root=$(shq "$app_root")
+    run_user=\$(stat -c '%U' \"\$app_root\" 2>/dev/null || echo www-data)
+    for f in /etc/cron.d/server-manager-$slug /etc/cron.d/server-manager-$slug-custom; do
+      if [ -f \"\$f\" ]; then echo \"# \$f\"; grep -v '^[[:space:]]*\$' \"\$f\"; echo; fi
+    done
+    echo \"# crontab for \$run_user\"
+    crontab -l -u \"\$run_user\" 2>/dev/null | grep -v '^[[:space:]]*\$' || echo '(empty)'
+  "
+}
+
+# workers_cron_add <slug> <schedule> <command> <app_root>
+#   Append a custom cron line (run as the app owner) to a managed cron.d file.
+workers_cron_add() {
+  local slug="$1" schedule="$2" command="$3" app_root="$4"
+  ssh_script --sudo <<EOF
+set -e
+app_root=$(shq "$app_root"); slug=$(shq "$slug")
+schedule=$(shq "$schedule"); cmd=$(shq "$command")
+run_user="\$(stat -c '%U' "\$app_root" 2>/dev/null || echo www-data)"; [ -n "\$run_user" ] || run_user=www-data
+f=/etc/cron.d/server-manager-\${slug}-custom
+[ -f "\$f" ] || printf '# server-manager custom cron for %s\n' "\$slug" > "\$f"
+printf '%s %s %s\n' "\$schedule" "\$run_user" "\$cmd" >> "\$f"
+chmod 0644 "\$f"
+echo "added: \$schedule \$run_user \$cmd"
+EOF
+}
+
+# workers_cron_remove <slug> <n> — remove the n-th custom cron job (1-based).
+workers_cron_remove() {
+  local slug="$1" n="$2"
+  ssh_script --sudo <<EOF
+set -e
+slug=$(shq "$slug"); n=$(shq "$n")
+f=/etc/cron.d/server-manager-\${slug}-custom
+[ -f "\$f" ] || { echo "no custom cron jobs" >&2; exit 1; }
+awk -v n="\$n" 'BEGIN{c=0} /^#/{print;next} /^[[:space:]]*\$/{print;next} {c++; if(c==n) next; print}' "\$f" > "\$f.tmp"
+mv "\$f.tmp" "\$f"
+echo "removed custom cron job #\$n"
+EOF
+}
+

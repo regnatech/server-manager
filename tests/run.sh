@@ -206,6 +206,14 @@ CUR=sched;      workers_install_scheduler clk /a 8.3 >/dev/null 2>&1 || true
 CUR=supens;     workers_ensure_supervisor >/dev/null 2>&1 || true
 CUR=whorizon;   workers_install_supervisor clk /a 8.3 horizon >/dev/null 2>&1 || true
 CUR=wqueue;     workers_install_supervisor clk /a 8.3 queue >/dev/null 2>&1 || true
+CUR=wstatus;    workers_status clk >/dev/null 2>&1 || true
+CUR=wrestart;   workers_restart clk >/dev/null 2>&1 || true
+CUR=wremove;    workers_remove clk >/dev/null 2>&1 || true
+CUR=schedstat;  workers_scheduler_status clk >/dev/null 2>&1 || true
+CUR=schedrm;    workers_scheduler_remove clk >/dev/null 2>&1 || true
+CUR=cronlist;   workers_cron_list clk /a >/dev/null 2>&1 || true
+CUR=cronadd;    workers_cron_add clk '0 3 * * *' 'php artisan x' /a >/dev/null 2>&1 || true
+CUR=cronrm;     workers_cron_remove clk 2 >/dev/null 2>&1 || true
 CUR=sitewrite;  printf 'domain=d\nframework=laravel\n' | remote_site_write d >/dev/null 2>&1 || true
 CUR=nginx;      nginx_render d /r laravel /s '' | nginx_install d >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
