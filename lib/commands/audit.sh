@@ -79,6 +79,32 @@ _audit_eval_count_security() {
   printf '%s\n' "$1" | grep -ciE 'security' || true
 }
 
+# _audit_eval_nginx_tokens <nginx server_tokens lines> -> 0 if it's an issue
+# (on, or left at the insecure default). Only an explicit 'off' clears it.
+_audit_eval_nginx_tokens() {
+  printf '%s' "$1" | grep -qiE 'server_tokens[[:space:]]+off' && return 1
+  return 0
+}
+
+# _audit_eval_php_expose <php -i expose_php line> -> 'on' | 'off' | ''
+_audit_eval_php_expose() {
+  printf '%s\n' "$1" | awk -F'=>' 'NR==1{v=$2; gsub(/[[:space:]]/,"",v); print tolower(v)}'
+}
+
+# _audit_eval_open_ports <ss -tlnH output> -> space-separated wildcard-bound
+# ports that aren't the expected 22/80/443.
+_audit_eval_open_ports() {
+  printf '%s\n' "$1" | awk '
+    {
+      addr=$4
+      n=split(addr,a,":"); port=a[n]
+      host=substr(addr,1,length(addr)-length(port)-1)
+      if (host=="0.0.0.0" || host=="*" || host=="::" || host=="[::]") {
+        if (port!="22" && port!="80" && port!="443" && port ~ /^[0-9]+$/) print port
+      }
+    }' | sort -un | tr '\n' ' ' | sed 's/[[:space:]]*$//'
+}
+
 # ---------------------------------------------------------------------------
 # Checks — each gathers data over SSH, then evaluates.
 # ---------------------------------------------------------------------------
@@ -146,6 +172,42 @@ audit_check_updates() {
   fi
 }
 
+audit_check_nginx_tokens() {
+  command -v nginx >/dev/null 2>&1 || true
+  local out; out="$(ssh_sudo "command -v nginx >/dev/null 2>&1 && nginx -T 2>/dev/null | grep -i server_tokens || echo ''" || true)"
+  # Only flag when nginx is present (an empty result with nginx installed = default on).
+  ssh_exec "command -v nginx >/dev/null 2>&1" || return 0
+  if _audit_eval_nginx_tokens "$out"; then
+    _audit_add nginx_server_tokens low 1 "Hide the nginx version" \
+      "nginx exposes its version (server_tokens not 'off')" \
+      "Response headers and error pages leak the exact nginx version, helping attackers target known CVEs." \
+      "Set 'server_tokens off;' and reload nginx."
+  fi
+}
+
+audit_check_php_expose() {
+  local out v; out="$(ssh_sudo "php -i 2>/dev/null | grep -i '^expose_php' || echo ''" || true)"
+  [[ -z "$out" ]] && return 0
+  v="$(_audit_eval_php_expose "$out")"
+  if [[ "$v" == "on" ]]; then
+    _audit_add php_expose low 1 "Stop PHP advertising itself" \
+      "expose_php is On" \
+      "PHP adds an X-Powered-By header revealing its version." \
+      "Set expose_php = Off in php.ini."
+  fi
+}
+
+audit_check_open_ports() {
+  local out ports; out="$(ssh_sudo "ss -tlnH 2>/dev/null || ss -tln 2>/dev/null || echo ''" || true)"
+  ports="$(_audit_eval_open_ports "$out")"
+  if [[ -n "$ports" ]]; then
+    _audit_add open_ports low 0 "" \
+      "Service(s) listening on all interfaces: ${ports}" \
+      "Ports ${ports} are reachable from any network, not just localhost." \
+      "Bind internal services (databases, caches) to 127.0.0.1, or restrict them with the firewall."
+  fi
+}
+
 # Site-level checks (run when a site scope is given; SITE_* already loaded).
 audit_check_env_perms() {
   [[ -n "$SITE_APP_ROOT" ]] || return 0
@@ -209,6 +271,9 @@ cmd_audit() {
   step "Checking fail2ban"                 audit_check_fail2ban     || true
   step "Checking automatic updates"        audit_check_auto_updates || true
   step "Checking pending security updates" audit_check_updates      || true
+  step "Checking nginx version exposure"   audit_check_nginx_tokens || true
+  step "Checking PHP exposure"             audit_check_php_expose   || true
+  step "Checking open ports"               audit_check_open_ports   || true
 
   if [[ -n "$scope" ]] && site_load "$scope" 2>/dev/null; then
     step "Checking .env permissions"   audit_check_env_perms   || true
@@ -269,6 +334,8 @@ _audit_fix() {
                        step "Securing .env permissions"      audit_fix_env_perms "$SITE_APP_ROOT" || die "Fix failed.";;
     env_exposed)       [[ -n "$SITE_DOMAIN" ]] || die "This fix needs a site: server audit fix env_exposed <site>"
                        step "Blocking dotfiles in nginx"     audit_fix_env_exposed "$SITE_DOMAIN" || die "Fix failed.";;
+    nginx_server_tokens) step "Hiding the nginx version"   audit_fix_nginx_tokens || die "Fix failed.";;
+    php_expose)        step "Disabling expose_php"          audit_fix_php_expose   || die "Fix failed.";;
     https)             [[ -n "$SITE_DOMAIN" ]] || die "This fix needs a site: server audit fix https <site>"
                        local email; email="$(global_get le_email)"; [[ -n "$email" ]] || email="$(ask_required "Let's Encrypt email")"
                        step "Issuing HTTPS certificate"      nginx_enable_https "$SITE_DOMAIN" "$email" || die "Fix failed.";;
@@ -352,6 +419,37 @@ audit_fix_updates() {
 audit_fix_env_perms() {
   local app_root="$1"
   ssh_sudo "f=$(shq "$app_root/.env"); [ -f \"\$f\" ] && { owner=\$(stat -c '%U' \"\$app_root\" 2>/dev/null || echo www-data); chgrp www-data \"\$f\" 2>/dev/null || true; chmod 640 \"\$f\"; echo \"perms set to 640\"; } || echo 'no .env'"
+}
+
+audit_fix_nginx_tokens() {
+  ssh_script --sudo <<'EOF'
+set -e
+command -v nginx >/dev/null 2>&1 || { echo "nginx not installed" >&2; exit 1; }
+f=/etc/nginx/conf.d/00-server-manager-hardening.conf
+echo 'server_tokens off;' > "$f"
+nginx -t && { systemctl reload nginx 2>/dev/null || service nginx reload; }
+echo "server_tokens off"
+EOF
+}
+
+audit_fix_php_expose() {
+  ssh_script --sudo <<'EOF'
+set -e
+command -v php >/dev/null 2>&1 || { echo "php not installed" >&2; exit 1; }
+changed=0
+for ini in $(php -i 2>/dev/null | awk -F'=> ' '/Loaded Configuration File|Additional .ini files/{print $2}' | tr ',' '\n' | grep -E '\.ini$'); do
+  [ -f "$ini" ] || continue
+  if grep -qiE '^[; ]*expose_php' "$ini"; then
+    sed -i -E 's/^[; ]*expose_php.*/expose_php = Off/I' "$ini"; changed=1
+  fi
+done
+# Also drop a CLI/FPM override to be safe.
+for d in /etc/php/*/fpm/conf.d /etc/php.d; do
+  [ -d "$d" ] && { echo 'expose_php = Off' > "$d/99-server-manager.ini"; changed=1; }
+done
+systemctl reload 'php*-fpm' 2>/dev/null || systemctl restart php-fpm 2>/dev/null || true
+[ "$changed" = 1 ] && echo "expose_php disabled" || echo "expose_php already off"
+EOF
 }
 
 audit_fix_env_exposed() {

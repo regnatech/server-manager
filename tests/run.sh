@@ -237,6 +237,8 @@ CUR=fix_autoup;  audit_fix_auto_updates >/dev/null 2>&1 || true
 CUR=fix_updates; audit_fix_updates >/dev/null 2>&1 || true
 CUR=fix_envperm; audit_fix_env_perms /a >/dev/null 2>&1 || true
 CUR=fix_envexp;  audit_fix_env_exposed example.com >/dev/null 2>&1 || true
+CUR=fix_tokens;  audit_fix_nginx_tokens >/dev/null 2>&1 || true
+CUR=fix_expose;  audit_fix_php_expose >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
 
 # ---------------------------------------------------------------------------
@@ -388,6 +390,14 @@ _audit_eval_env_mode_loose 600; t_eq "mode 600 not loose" "$?" 1
 _audit_eval_env_mode_loose 666; t_eq "mode 666 loose"     "$?" 0
 
 t_eq "security update count" "$(_audit_eval_count_security "$(printf 'Inst libc security\nInst foo\nInst bar security\n')")" 2
+
+_audit_eval_nginx_tokens "    server_tokens off;"; t_eq "nginx tokens off → ok"   "$?" 1
+_audit_eval_nginx_tokens "";                       t_eq "nginx tokens default → issue" "$?" 0
+_audit_eval_nginx_tokens "server_tokens on;";      t_eq "nginx tokens on → issue" "$?" 0
+t_eq "php expose On"  "$(_audit_eval_php_expose 'expose_php => On => On')"  "on"
+t_eq "php expose Off" "$(_audit_eval_php_expose 'expose_php => Off => Off')" "off"
+OPENSS="$(printf 'LISTEN 0 128 0.0.0.0:3306 0.0.0.0:*\nLISTEN 0 128 127.0.0.1:6379 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:80 0.0.0.0:*\nLISTEN 0 128 [::]:443 [::]:*\n')"
+t_eq "open ports: only risky wildcard non-80/443" "$(_audit_eval_open_ports "$OPENSS")" "3306"
 
 # Finding registration yields a valid JSON object with a boolean 'fixable'.
 _AUDIT_ITEMS=()
