@@ -45,7 +45,13 @@ if %ERRORLEVEL%==0 (
 )
 
 echo(
-echo server-manager needs Bash + OpenSSH on Windows.
-echo Install Git for Windows ^(https://git-scm.com/download/win^) or enable WSL,
-echo then re-run.  See the README "Windows" section.
+echo ============================================================
+echo  server-manager requires WSL to run on Windows.
+echo(
+echo  Install it once (admin PowerShell), then reopen the terminal:
+echo      wsl --install
+echo(
+echo  (Git Bash also works as an alternative.)
+echo  More: https://learn.microsoft.com/windows/wsl/install
+echo ============================================================
 exit /b 1

@@ -35,6 +35,13 @@ if ($wsl) {
 }
 
 Write-Host ''
-Write-Host 'server-manager needs Bash + OpenSSH on Windows.' -ForegroundColor Yellow
-Write-Host 'Install Git for Windows (https://git-scm.com/download/win) or enable WSL.'
+Write-Host '============================================================' -ForegroundColor Yellow
+Write-Host ' server-manager requires WSL to run on Windows.' -ForegroundColor Yellow
+Write-Host ''
+Write-Host ' Install it once (admin PowerShell), then reopen the terminal:'
+Write-Host '     wsl --install' -ForegroundColor Cyan
+Write-Host ''
+Write-Host ' (Git Bash also works as an alternative.)'
+Write-Host ' More: https://learn.microsoft.com/windows/wsl/install'
+Write-Host '============================================================' -ForegroundColor Yellow
 exit 1

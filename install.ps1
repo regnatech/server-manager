@@ -26,7 +26,10 @@ $hasBash = (Get-Command bash -ErrorAction SilentlyContinue) -or
            (Test-Path "$env:ProgramFiles\Git\bin\bash.exe") -or
            (Get-Command wsl -ErrorAction SilentlyContinue)
 if (-not $hasBash) {
-  Write-Warning "Bash + OpenSSH not detected. Install Git for Windows (https://git-scm.com/download/win) or enable WSL."
+  Write-Host ''
+  Write-Host '  !! WSL is required to run server-manager on Windows.' -ForegroundColor Yellow
+  Write-Host '     Install it (admin PowerShell):  wsl --install' -ForegroundColor Cyan
+  Write-Host '     (Git Bash also works as an alternative.)'
 } else {
   Write-Host "Bash backend detected." -ForegroundColor Green
 }

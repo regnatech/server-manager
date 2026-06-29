@@ -122,11 +122,15 @@ server help
 
 **Windows**
 
-The engine is a Bash script that drives OpenSSH, so on Windows it runs through
-**Git Bash** (ships with [Git for Windows](https://git-scm.com/download/win)) or
-**WSL** — both provide `bash`, `ssh` and `scp`. A launcher (`bin\server.cmd` /
-`bin\server.ps1`) finds Bash for you, so `server …` works from `cmd` or
-PowerShell just like on Linux:
+> ⚠️ **WSL is required** (the engine is Bash + OpenSSH). Install it once in an
+> admin PowerShell, then reopen your terminal:
+> ```powershell
+> wsl --install
+> ```
+> Git Bash also works as an alternative.
+
+A launcher (`bin\server.cmd` / `bin\server.ps1`) finds the Bash backend for you,
+so `server …` works from `cmd` or PowerShell just like on Linux:
 
 ```powershell
 git clone https://github.com/regnatech/server-manager.git
