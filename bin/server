@@ -129,6 +129,8 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   audit [site]             Security audit: findings + one-click fixes
   audit fix <id> [site]    Apply a single audit remediation by id
   audit fixall [site]      Apply every auto-fixable finding in one go
+  audit save [site]        Run the audit and record a snapshot
+  audit history [site]     Show recorded audit snapshots over time
   metrics [server]         Health snapshot: CPU, memory, disk, load, services
   uptime [site|--all]      HTTP health check (status, response time, up/down)
   notify <action> …        Notifications: status | set slack|telegram … | test | off

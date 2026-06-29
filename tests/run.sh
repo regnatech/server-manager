@@ -494,6 +494,13 @@ t_true "fixable is boolean"     grep -q '"fixable":true' <<<"$AITEM"
 t_true "severity recorded"      grep -q '"severity":"high"' <<<"$AITEM"
 t_eq   "high counter bumped"    "$_AUDIT_COUNT_HIGH" 1
 
+# audit history builder (tab-separated ts/crit/high/med/low → totals)
+AH="$(_audit_history_json "$(printf '2026-06-28T10:00\t1\t2\t1\t0\n2026-06-29T10:00\t0\t1\t1\t2\n')")"
+t_true "audit history: array"     grep -qE '^\[.*\]$' <<<"$AH"
+t_true "audit history: first total 4" grep -q '"at":"2026-06-28T10:00","critical":1,"high":2,"medium":1,"low":0,"total":4' <<<"$AH"
+t_true "audit history: second total 4" grep -q '"at":"2026-06-29T10:00","critical":0,"high":1,"medium":1,"low":2,"total":4' <<<"$AH"
+t_eq   "audit history empty"      "$(_audit_history_json '')" "[]"
+
 # fixall only collects the auto-fixable ids.
 _AUDIT_ITEMS=(); _AUDIT_FIX_IDS=()
 _audit_add firewall high 1 "fw" t d r 2>/dev/null

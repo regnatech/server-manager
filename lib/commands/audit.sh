@@ -255,6 +255,12 @@ cmd_audit() {
   if [[ "$sub" == "fixall" ]]; then
     shift; _audit_fixall "$@"; return
   fi
+  if [[ "$sub" == "history" ]]; then
+    shift; _audit_history "${1:-}"; return
+  fi
+  if [[ "$sub" == "save" ]]; then
+    SRVMGR_AUDIT_SAVE=1; sub="${2:-}"   # scope becomes the site arg (if any)
+  fi
 
   local scope="$sub" server
   if [[ -n "$scope" ]]; then
@@ -269,6 +275,48 @@ cmd_audit() {
 
   _audit_run_checks "$scope"
   _audit_emit
+  [[ "${SRVMGR_AUDIT_SAVE:-0}" == "1" ]] && _audit_save "${scope:-$server}"
+}
+
+SRVMGR_AUDIT_DIR="${SRVMGR_AUDIT_DIR:-$SRVMGR_HOME/audits}"
+
+# _audit_history_json <log content: "ts\tcrit\thigh\tmed\tlow" lines> -> array
+_audit_history_json() {
+  local out="[" first=1 ts c h m l total
+  while IFS=$'\t' read -r ts c h m l || [[ -n "$ts" ]]; do
+    [[ -z "$ts" ]] && continue
+    total=$(( ${c:-0} + ${h:-0} + ${m:-0} + ${l:-0} ))
+    (( first )) || out+=","
+    out+="{$(json_kv_string at "$ts"),$(json_kv_raw critical "${c:-0}"),$(json_kv_raw high "${h:-0}"),$(json_kv_raw medium "${m:-0}"),$(json_kv_raw low "${l:-0}"),$(json_kv_raw total "$total")}"; first=0
+  done <<<"$1"
+  out+="]"
+  printf '%s' "$out"
+}
+
+# Append the current run's counts to the scope's history log.
+_audit_save() {
+  local key; key="$(slugify "$1")"
+  mkdir -p "$SRVMGR_AUDIT_DIR" 2>/dev/null || return 0
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(timestamp)" \
+    "$_AUDIT_COUNT_CRIT" "$_AUDIT_COUNT_HIGH" "$_AUDIT_COUNT_MED" "$_AUDIT_COUNT_LOW" \
+    >>"$SRVMGR_AUDIT_DIR/${key}.log"
+  json_mode || ok "Saved audit snapshot for '${1}'."
+}
+
+# server audit history [site]
+_audit_history() {
+  local scope="${1:-}" server key
+  if [[ -n "$scope" ]]; then key="$(slugify "$scope")"
+  else server="$(registry_resolve "$OPT_SERVER" 2>/dev/null || echo server)"; key="$(slugify "$server")"; fi
+  local log="$SRVMGR_AUDIT_DIR/${key}.log" content=""
+  [[ -f "$log" ]] && content="$(cat "$log")"
+  if json_mode; then
+    ui_emit "{\"t\":\"data\",$(json_kv_string kind audit_history),$(json_kv_raw items "$(_audit_history_json "$content")")}"
+    return
+  fi
+  section "Audit history — ${scope:-$key}"
+  if [[ -z "${content//[$'\n'[:space:]]/}" ]]; then info "No saved audits yet (run 'server audit save ${scope}')."; return; fi
+  printf '%s\n' "$content" | awk -F'\t' '{printf "  %s  crit %s · high %s · med %s · low %s\n", $1, $2, $3, $4, $5}' >&2
 }
 
 # _audit_run_checks <scope> — reset state and run every check as a step.
