@@ -135,6 +135,37 @@ abstract class CliService {
   /// `server --json notify off` → clears all destinations, then a [DoneEvent].
   Stream<CliEvent> notifyOff();
 
+  /// `server --json uptime --all` → emits an `uptime` [DataEvent] (items:
+  /// `{domain, url, up, code, ms}`) then a [DoneEvent].
+  Stream<CliEvent> uptimeAll();
+
+  /// `server --json release list <domain>` → a `releases` [DataEvent]
+  /// (`value:{current, items:[{name, current}]}`) then a [DoneEvent].
+  Stream<CliEvent> releaseList(String domain);
+
+  /// `server --json release rollback <domain> [name]` → step events then a
+  /// [DoneEvent]. Omitting [name] rolls back to the previous release.
+  Stream<CliEvent> releaseRollback(String domain, [String? name]);
+
+  /// `server --json release deploy <domain>` → an atomic clone/build/migrate/
+  /// switch/reload step stream then a [DoneEvent].
+  Stream<CliEvent> releaseDeploy(String domain);
+
+  /// `server --json diff <domain>` → a `deploy_diff` [DataEvent]
+  /// (`value:{branch, from, to, ahead, commits:[…], migrations:[…]}`) then a
+  /// [DoneEvent].
+  Stream<CliEvent> deployDiff(String domain);
+
+  /// `server --json update --all [--framework <fw>]` → per-site section/step
+  /// events then a `deploy_all` [DataEvent] (`value:{total, deployed, failed}`)
+  /// then a [DoneEvent]. [framework] scopes the run to a single framework.
+  Stream<CliEvent> updateAll({String? framework});
+
+  /// `server --json audit history [domain]` → an `audit_history` [DataEvent]
+  /// (items: `{at, critical, high, medium, low, total}`) then a [DoneEvent].
+  /// [domain] scopes to a site; omit it for the server-level history.
+  Stream<CliEvent> auditHistory([String? domain]);
+
   /// `server --json add --plan` → emits a plan [DataEvent].
   Stream<CliEvent> addPlan();
 
@@ -322,6 +353,47 @@ class LiveCliService implements CliService {
 
   @override
   Stream<CliEvent> notifyOff() => _stream(<String>['notify', 'off']);
+
+  @override
+  Stream<CliEvent> uptimeAll() => _stream(<String>['uptime', '--all']);
+
+  @override
+  Stream<CliEvent> releaseList(String domain) =>
+      _stream(<String>['release', 'list', domain]);
+
+  @override
+  Stream<CliEvent> releaseRollback(String domain, [String? name]) =>
+      _stream(<String>[
+        'release',
+        'rollback',
+        domain,
+        if (name != null && name.isNotEmpty) name,
+      ]);
+
+  @override
+  Stream<CliEvent> releaseDeploy(String domain) =>
+      _stream(<String>['release', 'deploy', domain]);
+
+  @override
+  Stream<CliEvent> deployDiff(String domain) =>
+      _stream(<String>['diff', domain]);
+
+  @override
+  Stream<CliEvent> updateAll({String? framework}) => _stream(<String>[
+        'update',
+        '--all',
+        if (framework != null && framework.isNotEmpty) ...<String>[
+          '--framework',
+          framework,
+        ],
+      ]);
+
+  @override
+  Stream<CliEvent> auditHistory([String? domain]) => _stream(<String>[
+        'audit',
+        'history',
+        if (domain != null && domain.isNotEmpty) domain,
+      ]);
 
   @override
   Stream<CliEvent> addPlan() => _stream(<String>['add', '--plan']);

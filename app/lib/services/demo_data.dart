@@ -803,6 +803,78 @@ class DemoData {
         ),
         const DoneEvent(ok: true),
       ];
+
+  /// Initial atomic-release timestamps for a demo site (newest last). The first
+  /// entry of [releaseTimestamps] reversed is the current release.
+  static const List<String> releaseTimestamps = <String>[
+    '2026-06-29_06-48-12',
+    '2026-06-28_21-14-03',
+    '2026-06-27_09-02-55',
+    '2026-06-26_14-48-31',
+    '2026-06-25_11-20-09',
+  ];
+
+  /// A two-site multi-deploy (`update --all`) run: a section + a couple of
+  /// steps per demo site, then the `deploy_all` summary.
+  static List<String> updateAllDomains() => <String>[
+        for (final Map<String, dynamic> s in sites.take(2))
+          s['domain'] as String,
+      ];
+
+  /// The `diff` payload (matches the `deploy_diff` contract). Reuses the demo
+  /// git commit style for [commits]; lists a couple of pending migrations.
+  static Map<String, dynamic> deployDiff(String domain) {
+    final List<Map<String, dynamic>> log = gitLog();
+    return <String, dynamic>{
+      'branch': 'main',
+      'from': '4f1c2a9',
+      'to': 'a77b3e1',
+      'ahead': 3,
+      'commits': log.take(3).toList(),
+      'migrations': <String>[
+        '2026_06_25_140000_add_index_to_orders.php',
+        '2026_06_28_090000_create_webhook_events_table.php',
+      ],
+    };
+  }
+
+  /// Four audit-posture snapshots over time with a decreasing total, for the
+  /// `audit history` view (newest last).
+  static List<Map<String, dynamic>> auditHistory(String scope) =>
+      <Map<String, dynamic>>[
+        <String, dynamic>{
+          'at': '2026-06-12 09:00',
+          'critical': 1,
+          'high': 3,
+          'medium': 3,
+          'low': 1,
+          'total': 8,
+        },
+        <String, dynamic>{
+          'at': '2026-06-19 09:00',
+          'critical': 0,
+          'high': 2,
+          'medium': 3,
+          'low': 1,
+          'total': 6,
+        },
+        <String, dynamic>{
+          'at': '2026-06-26 09:00',
+          'critical': 0,
+          'high': 2,
+          'medium': 2,
+          'low': 1,
+          'total': 5,
+        },
+        <String, dynamic>{
+          'at': '2026-06-29 09:00',
+          'critical': 0,
+          'high': 1,
+          'medium': 1,
+          'low': 1,
+          'total': 3,
+        },
+      ];
 }
 
 /// A [CliService] that replays [DemoData] with artificial pacing so the UI
@@ -840,6 +912,23 @@ class DemoCliService implements CliService {
   /// settings form is the focus of an SM_ROUTE=/settings screenshot.
   static bool _slackConfigured = false;
   static bool _telegramConfigured = false;
+
+  /// Per-domain atomic-release timestamps (newest first), so a demo
+  /// `release deploy` / `release rollback` visibly mutates a subsequent
+  /// `release list`. Seeded lazily from [DemoData.releaseTimestamps].
+  static final Map<String, List<String>> _releases = <String, List<String>>{};
+
+  /// Current (active) release timestamp per domain, mutated by rollback/deploy.
+  static final Map<String, String> _currentRelease = <String, String>{};
+
+  /// Returns the demo releases for [domain], seeding from the canned list on
+  /// first access. Index 0 is the newest; [_currentRelease] tracks the active.
+  static List<String> _releasesFor(String domain) {
+    return _releases.putIfAbsent(
+      domain,
+      () => List<String>.from(DemoData.releaseTimestamps),
+    );
+  }
 
   @override
   Future<VersionEvent> version() async {
@@ -1361,6 +1450,143 @@ class DemoCliService implements CliService {
     _slackConfigured = false;
     _telegramConfigured = false;
     await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> uptimeAll() async* {
+    await Future<void>.delayed(_shortGap);
+    // Most sites up (200/301), one down to exercise the err StatusDot.
+    final List<Map<String, dynamic>> items = <Map<String, dynamic>>[];
+    final List<int> codes = <int>[200, 200, 301, 200, 200];
+    final List<int> times = <int>[142, 88, 213, 47, 296];
+    int i = 0;
+    for (final Map<String, dynamic> s in DemoData.sites) {
+      final String domain = s['domain'] as String;
+      final bool down = (s['health'] as String?) == 'down';
+      items.add(<String, dynamic>{
+        'domain': domain,
+        'url': 'https://$domain',
+        'up': !down,
+        'code': down ? 503 : codes[i % codes.length],
+        'ms': down ? 0 : times[i % times.length],
+      });
+      i++;
+    }
+    yield DataEvent(kind: 'uptime', items: items);
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> releaseList(String domain) async* {
+    await Future<void>.delayed(_shortGap);
+    final List<String> releases = _releasesFor(domain);
+    final String current = _currentRelease[domain] ?? releases.first;
+    yield DataEvent(
+      kind: 'releases',
+      value: <String, dynamic>{
+        'current': current,
+        'items': <Map<String, dynamic>>[
+          for (final String name in releases)
+            <String, dynamic>{'name': name, 'current': name == current},
+        ],
+      },
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> releaseRollback(String domain, [String? name]) async* {
+    final List<String> releases = _releasesFor(domain);
+    final String target = (name != null && name.isNotEmpty)
+        ? name
+        : (releases.length > 1 ? releases[1] : releases.first);
+    yield BannerEvent(label: 'Rolling back $domain');
+    yield StepStart(id: 'switch', label: 'Switching current → $target');
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    yield const StepEnd(id: 'switch', ok: true, dur: 0.7);
+    yield const StepStart(id: 'reload', label: 'Reloading services');
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    yield const StepEnd(id: 'reload', ok: true, dur: 0.5);
+    _currentRelease[domain] = target;
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> releaseDeploy(String domain) async* {
+    final String ts = _newReleaseTimestamp();
+    yield BannerEvent(label: 'Deploying $domain (atomic)');
+    yield SectionEvent(label: 'Release $ts');
+    for (final (String, String) s in <(String, String)>[
+      ('clone', 'Cloning into releases/$ts'),
+      ('build', 'Installing dependencies & building assets'),
+      ('migrate', 'Running migrations'),
+      ('switch', 'Switching current → $ts'),
+      ('reload', 'Reloading PHP-FPM & workers'),
+    ]) {
+      yield StepStart(id: s.$1, label: s.$2);
+      await Future<void>.delayed(const Duration(milliseconds: 620));
+      yield StepEnd(id: s.$1, ok: true, dur: 0.6);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+    // Prepend the new release as current so a re-list reflects it.
+    _releasesFor(domain).insert(0, ts);
+    _currentRelease[domain] = ts;
+    yield const DoneEvent(ok: true);
+  }
+
+  /// A fresh release timestamp (current wall clock) for a demo atomic deploy.
+  static String _newReleaseTimestamp() {
+    final DateTime now = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${now.year}-${two(now.month)}-${two(now.day)}_'
+        '${two(now.hour)}-${two(now.minute)}-${two(now.second)}';
+  }
+
+  @override
+  Stream<CliEvent> deployDiff(String domain) async* {
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(kind: 'deploy_diff', value: DemoData.deployDiff(domain));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> updateAll({String? framework}) async* {
+    yield BannerEvent(label: 'Deploying all sites');
+    final List<String> domains = DemoData.updateAllDomains();
+    int deployed = 0;
+    for (final String domain in domains) {
+      yield SectionEvent(label: '▶ $domain');
+      for (final (String, String) s in <(String, String)>[
+        ('pull-$domain', 'Pulling latest changes'),
+        ('deploy-$domain', 'Building & switching release'),
+      ]) {
+        yield StepStart(id: s.$1, label: s.$2);
+        await Future<void>.delayed(const Duration(milliseconds: 520));
+        yield StepEnd(id: s.$1, ok: true, dur: 0.5);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+      deployed++;
+    }
+    yield DataEvent(
+      kind: 'deploy_all',
+      value: <String, dynamic>{
+        'total': domains.length,
+        'deployed': deployed,
+        'failed': 0,
+      },
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> auditHistory([String? domain]) async* {
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(
+      kind: 'audit_history',
+      items: DemoData.auditHistory(domain ?? ''),
+    );
     yield const DoneEvent(ok: true);
   }
 

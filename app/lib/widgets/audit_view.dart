@@ -27,6 +27,7 @@ class AuditView extends ConsumerStatefulWidget {
     required this.runAudit,
     required this.runFix,
     this.runFixAll,
+    this.runHistory,
     this.autoRun = false,
   });
 
@@ -39,6 +40,10 @@ class AuditView extends ConsumerStatefulWidget {
   /// Starts a remediation for every auto-fixable finding at once. When null
   /// the "Fix all" button is hidden.
   final Stream<CliEvent> Function()? runFixAll;
+
+  /// Fetches the posture history (`audit history`). When null the "History"
+  /// affordance is hidden.
+  final Stream<CliEvent> Function()? runHistory;
 
   /// When true, the audit runs once automatically on first build (used by demo
   /// deep-links and the server audit screen).
@@ -203,6 +208,30 @@ class _AuditViewState extends ConsumerState<AuditView> {
     }
   }
 
+  /// Loads the posture history stream and shows it in a dialog.
+  Future<void> _showHistory() async {
+    final Stream<CliEvent> Function()? run = widget.runHistory;
+    if (run == null) return;
+    final List<Map<String, dynamic>> snapshots = <Map<String, dynamic>>[];
+    await for (final CliEvent e in run()) {
+      switch (e) {
+        case DataEvent(kind: 'audit_history', items: final List<dynamic>? items):
+          for (final dynamic item in items ?? const <dynamic>[]) {
+            if (item is Map<String, dynamic>) snapshots.add(item);
+          }
+        case DoneEvent():
+          break;
+        default:
+          break;
+      }
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext _) => _AuditHistoryDialog(snapshots: snapshots),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<AuditFinding>? findings = _findings;
@@ -219,6 +248,7 @@ class _AuditViewState extends ConsumerState<AuditView> {
             running: _running,
             onRerun: _running ? null : _runAudit,
             onFixAll: widget.runFixAll != null ? _runFixAll : null,
+            onHistory: widget.runHistory != null ? _showHistory : null,
             fixingAll: _fixingAll,
             fixAllStatus: _fixAllStatus,
           ),
@@ -277,6 +307,7 @@ class _AuditHeader extends StatelessWidget {
     required this.running,
     required this.onRerun,
     required this.onFixAll,
+    required this.onHistory,
     required this.fixingAll,
     required this.fixAllStatus,
   });
@@ -287,6 +318,9 @@ class _AuditHeader extends StatelessWidget {
 
   /// Applies every auto-fixable finding at once; null hides the button.
   final VoidCallback? onFixAll;
+
+  /// Opens the posture-history dialog; null hides the affordance.
+  final VoidCallback? onHistory;
   final bool fixingAll;
   final String fixAllStatus;
 
@@ -348,6 +382,14 @@ class _AuditHeader extends StatelessWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
+                if (onHistory != null) ...<Widget>[
+                  IconButton(
+                    tooltip: 'Posture history',
+                    icon: const Icon(Icons.history_toggle_off),
+                    onPressed: onHistory,
+                  ),
+                  const SizedBox(width: Insets.xs),
+                ],
                 if (showFixAll) ...<Widget>[
                   AppButton(
                     label: 'Fix all',
@@ -654,6 +696,114 @@ class _FindingAction extends StatelessWidget {
       icon: state == _FixState.failed ? Icons.refresh : Icons.build_outlined,
       loading: running,
       onPressed: running ? null : onFix,
+    );
+  }
+}
+
+/// A dialog listing audit-posture snapshots over time: per-row date, a tiny
+/// inline bar of the total (relative to the worst snapshot), per-severity
+/// counts and the total.
+class _AuditHistoryDialog extends StatelessWidget {
+  const _AuditHistoryDialog({required this.snapshots});
+  final List<Map<String, dynamic>> snapshots;
+
+  int _i(Map<String, dynamic> m, String k) => (m[k] as num?)?.toInt() ?? 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final int maxTotal = snapshots.fold<int>(
+      1,
+      (int acc, Map<String, dynamic> m) =>
+          _i(m, 'total') > acc ? _i(m, 'total') : acc,
+    );
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Insets.radiusLg),
+      ),
+      title: Row(
+        children: <Widget>[
+          Icon(Icons.history_toggle_off,
+              color: theme.colorScheme.primary, size: 20),
+          const SizedBox(width: Insets.sm),
+          const Text('Posture history'),
+        ],
+      ),
+      content: SizedBox(
+        width: 460,
+        child: snapshots.isEmpty
+            ? const Text('No history available.')
+            : SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    for (final Map<String, dynamic> s in snapshots)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          children: <Widget>[
+                            SizedBox(
+                              width: 116,
+                              child: Text(
+                                s['at']?.toString() ?? '',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: Insets.sm),
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: _i(s, 'total') / maxTotal,
+                                  minHeight: 6,
+                                  backgroundColor:
+                                      theme.colorScheme.surfaceContainerHighest,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    _i(s, 'total') == 0
+                                        ? Palette.ok
+                                        : Palette.warn,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: Insets.sm),
+                            Text(
+                              'C${_i(s, 'critical')} H${_i(s, 'high')} '
+                              'M${_i(s, 'medium')} L${_i(s, 'low')}',
+                              style: AppTheme.mono(
+                                context,
+                                size: 11,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(width: Insets.sm),
+                            SizedBox(
+                              width: 28,
+                              child: Text(
+                                '${_i(s, 'total')}',
+                                textAlign: TextAlign.right,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+      ),
+      actions: <Widget>[
+        AppButton(
+          label: 'Close',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ],
     );
   }
 }

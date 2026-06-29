@@ -4,9 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../models/site.dart';
+import '../services/cli_service.dart';
 import '../state/connection_provider.dart';
 import '../state/sites_provider.dart';
 import '../theme/app_theme.dart';
+import '../transport/cli_event.dart';
+import '../widgets/app_button.dart';
 import '../widgets/framework_chip.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/section_header.dart';
@@ -16,6 +19,40 @@ import '../widgets/status_dot.dart';
 /// an "add site" entry point.
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
+
+  /// Confirms, then opens the streaming multi-site deploy dialog.
+  Future<void> _confirmDeployAll(BuildContext context, WidgetRef ref) async {
+    final bool? go = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext _) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Insets.radiusLg),
+        ),
+        title: const Text('Deploy all sites?'),
+        content: const Text(
+          'This pulls the latest changes and deploys every site in turn. '
+          'You can watch each step stream live.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          AppButton(
+            label: 'Deploy all',
+            icon: Icons.rocket_launch,
+            onPressed: () => Navigator.of(context).pop(true),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext _) => const _DeployAllDialog(),
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -37,6 +74,11 @@ class DashboardScreen extends ConsumerWidget {
                 ),
               ),
             ),
+          IconButton(
+            tooltip: 'Deploy all sites',
+            icon: const Icon(Icons.rocket_launch),
+            onPressed: () => _confirmDeployAll(context, ref),
+          ),
           IconButton(
             tooltip: 'Server health',
             icon: const Icon(Icons.monitor_heart_outlined),
@@ -309,6 +351,163 @@ class _ErrorState extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// A streaming multi-site deploy dialog: runs `update --all`, listing each
+/// site section + its steps as they arrive, ending with a deployed/failed
+/// summary banner.
+class _DeployAllDialog extends ConsumerStatefulWidget {
+  const _DeployAllDialog();
+
+  @override
+  ConsumerState<_DeployAllDialog> createState() => _DeployAllDialogState();
+}
+
+class _DeployAllDialogState extends ConsumerState<_DeployAllDialog> {
+  /// Rendered lines: ('section'|'step', label).
+  final List<(String, String)> _lines = <(String, String)>[];
+  bool _running = true;
+  Map<String, dynamic>? _summary;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _run());
+  }
+
+  Future<void> _run() async {
+    final CliService cli = ref.read(cliServiceProvider);
+    Map<String, dynamic>? summary;
+    await for (final CliEvent e in cli.updateAll()) {
+      if (!mounted) return;
+      switch (e) {
+        case SectionEvent(label: final String l):
+          setState(() => _lines.add(('section', l)));
+        case StepStart(label: final String l):
+          setState(() => _lines.add(('step', l)));
+        case DataEvent(
+            kind: 'deploy_all',
+            value: final Map<String, dynamic>? v,
+          ):
+          summary = v;
+        case DoneEvent():
+          break;
+        default:
+          break;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _running = false;
+      _summary = summary;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Map<String, dynamic>? s = _summary;
+    final int deployed = (s?['deployed'] as num?)?.toInt() ?? 0;
+    final int failed = (s?['failed'] as num?)?.toInt() ?? 0;
+    final int total = (s?['total'] as num?)?.toInt() ?? 0;
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Insets.radiusLg),
+      ),
+      title: Row(
+        children: <Widget>[
+          if (_running)
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Icon(Icons.rocket_launch, color: theme.colorScheme.primary, size: 20),
+          const SizedBox(width: Insets.sm),
+          Text(_running ? 'Deploying all sites…' : 'Deploy all complete'),
+        ],
+      ),
+      content: SizedBox(
+        width: 460,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 320),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (final (String, String) line in _lines)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: line.$1 == 'section'
+                            ? Text(
+                                line.$2,
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              )
+                            : Row(
+                                children: <Widget>[
+                                  const Icon(
+                                    Icons.check,
+                                    size: 14,
+                                    color: Palette.ok,
+                                  ),
+                                  const SizedBox(width: Insets.sm),
+                                  Expanded(
+                                    child: Text(
+                                      line.$2,
+                                      style: theme.textTheme.bodySmall,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (!_running && s != null) ...<Widget>[
+              const SizedBox(height: Insets.md),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(Insets.md),
+                decoration: BoxDecoration(
+                  color: (failed == 0 ? Palette.ok : Palette.warn)
+                      .withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(Insets.radiusMd),
+                  border: Border.all(
+                    color: (failed == 0 ? Palette.ok : Palette.warn)
+                        .withValues(alpha: 0.6),
+                  ),
+                ),
+                child: Text(
+                  '$deployed/$total deployed'
+                  '${failed > 0 ? ' · $failed failed' : ''}',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: failed == 0 ? Palette.ok : Palette.warn,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        AppButton(
+          label: 'Close',
+          onPressed:
+              _running ? null : () => Navigator.of(context).pop(),
+        ),
+      ],
     );
   }
 }

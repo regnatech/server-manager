@@ -12,6 +12,7 @@ import '../transport/cli_event.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/section_header.dart';
+import '../widgets/status_dot.dart';
 
 /// Live "Server Health" screen, reached from the dashboard.
 ///
@@ -255,6 +256,13 @@ class _MetricsBody extends StatelessWidget {
           ),
           2,
         ),
+        const SizedBox(height: Insets.lg),
+        const SectionHeader(
+          title: 'Availability',
+          subtitle: 'HTTP reachability and response time per site',
+        ),
+        const SizedBox(height: Insets.md),
+        _staggered(const _AvailabilitySection(), 3),
       ],
     );
   }
@@ -532,6 +540,125 @@ class _ServicePill extends StatelessWidget {
               color: color,
               fontWeight: FontWeight.w700,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Runs `uptime --all` and renders one row per site: a [StatusDot] (up/down),
+/// the domain, and its "code · ms" (or "DOWN"). Auto-loads on first frame.
+class _AvailabilitySection extends ConsumerStatefulWidget {
+  const _AvailabilitySection();
+
+  @override
+  ConsumerState<_AvailabilitySection> createState() =>
+      _AvailabilitySectionState();
+}
+
+class _AvailabilitySectionState extends ConsumerState<_AvailabilitySection> {
+  bool _loading = true;
+  List<Map<String, dynamic>> _rows = const <Map<String, dynamic>>[];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    final CliService cli = ref.read(cliServiceProvider);
+    List<Map<String, dynamic>> rows = const <Map<String, dynamic>>[];
+    await for (final CliEvent e in cli.uptimeAll()) {
+      if (e is DataEvent && e.kind == 'uptime') {
+        rows = <Map<String, dynamic>>[
+          for (final dynamic item in e.items ?? const <dynamic>[])
+            if (item is Map<String, dynamic>) item,
+        ];
+      } else if (e is DoneEvent) {
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _rows = rows;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    if (_loading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(Insets.lg),
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (_rows.isEmpty) {
+      return const Center(child: Text('No sites to check'));
+    }
+    return GlassCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Insets.md,
+        vertical: Insets.sm,
+      ),
+      child: Column(
+        children: <Widget>[
+          for (int i = 0; i < _rows.length; i++) ...<Widget>[
+            if (i > 0)
+              Divider(
+                height: Insets.md,
+                color: theme.colorScheme.outline.withValues(alpha: 0.3),
+              ),
+            _UptimeRow(row: _rows[i]),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One availability row: status dot + domain + "code · ms" / "DOWN".
+class _UptimeRow extends StatelessWidget {
+  const _UptimeRow({required this.row});
+  final Map<String, dynamic> row;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool up = row['up'] == true;
+    final int code = (row['code'] as num?)?.toInt() ?? 0;
+    final int ms = (row['ms'] as num?)?.toInt() ?? 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Insets.xs),
+      child: Row(
+        children: <Widget>[
+          StatusDot(health: up ? 'ok' : 'down', size: 9),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Text(
+              row['domain']?.toString() ?? '',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: Insets.sm),
+          Text(
+            up ? '$code · ${ms}ms' : 'DOWN',
+            style: AppTheme.mono(
+              context,
+              size: 12,
+              color: up ? Palette.ok : Palette.err,
+            ).copyWith(fontWeight: FontWeight.w700),
           ),
         ],
       ),

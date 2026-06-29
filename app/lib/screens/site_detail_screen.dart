@@ -19,6 +19,7 @@ import '../widgets/app_button.dart';
 import '../widgets/audit_view.dart';
 import '../widgets/deploy_timeline.dart';
 import '../widgets/framework_chip.dart';
+import '../widgets/glass_card.dart';
 import '../widgets/merge_conflict_view.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_dot.dart';
@@ -37,6 +38,7 @@ class _Tool {
 const List<_Tool> _tools = <_Tool>[
   _Tool('overview', 'Overview', Icons.dashboard_outlined),
   _Tool('deploy', 'Deploy', Icons.rocket_launch_outlined),
+  _Tool('releases', 'Releases', Icons.layers_outlined),
   _Tool('git', 'Git', Icons.account_tree_outlined),
   _Tool('cron', 'Cron', Icons.schedule_outlined),
   _Tool('workers', 'Workers', Icons.memory_outlined),
@@ -65,7 +67,7 @@ class _SiteDetailScreenState extends ConsumerState<SiteDetailScreen> {
   late int _selectedTool = _initialToolIndex();
 
   // Optional deep-link to a specific tool (used by demo/screenshot launches):
-  // SM_TAB=overview|deploy|git|cron|workers|logs|ssl|database|audit.
+  // SM_TAB=overview|deploy|releases|git|cron|workers|logs|ssl|database|audit.
   static int _initialToolIndex() {
     final String want = (envVar('SM_TAB') ?? '').toLowerCase();
     final int i = _tools.indexWhere((_Tool t) => t.key == want);
@@ -130,6 +132,7 @@ class _SiteDetailScreenState extends ConsumerState<SiteDetailScreen> {
                     children: <Widget>[
                       _OverviewTab(site: site, domain: widget.domain),
                       _DeployTab(domain: widget.domain),
+                      _ReleasesTab(domain: widget.domain),
                       _GitTab(domain: widget.domain),
                       _DataListTab(
                         domain: widget.domain,
@@ -484,6 +487,13 @@ class _DeployTab extends ConsumerWidget {
       controller.start(events);
     }
 
+    void previewChanges() {
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext _) => _DiffDialog(domain: domain),
+      );
+    }
+
     // Demo/screenshot convenience: auto-kick a deploy once so the live timeline
     // can be observed without a manual click. Enabled via SM_AUTODEPLOY=1.
     if (envVar('SM_AUTODEPLOY') == '1' && _autoDeployed.add(domain)) {
@@ -510,6 +520,13 @@ class _DeployTab extends ConsumerWidget {
                 ),
               ),
               AppButton(
+                label: 'Preview changes',
+                icon: Icons.difference_outlined,
+                tonal: true,
+                onPressed: state.running ? null : previewChanges,
+              ),
+              const SizedBox(width: Insets.sm),
+              AppButton(
                 label: 'Rollback',
                 icon: Icons.history,
                 tonal: true,
@@ -526,6 +543,460 @@ class _DeployTab extends ConsumerWidget {
           ),
         ),
         Expanded(child: DeployTimeline(state: state)),
+      ],
+    );
+  }
+}
+
+/// One atomic release row from `release list`.
+class _Release {
+  const _Release({required this.name, required this.current});
+  final String name;
+  final bool current;
+
+  factory _Release.fromJson(Map<String, dynamic> json) => _Release(
+        name: json['name']?.toString() ?? '',
+        current: json['current'] == true,
+      );
+}
+
+/// The Releases tool: an atomic "Deploy (atomic)" action plus the list of
+/// existing releases (current badged; others rollback-able). Loads
+/// `release list <domain>` on first build; re-lists after deploy/rollback.
+class _ReleasesTab extends ConsumerStatefulWidget {
+  const _ReleasesTab({required this.domain});
+  final String domain;
+
+  @override
+  ConsumerState<_ReleasesTab> createState() => _ReleasesTabState();
+}
+
+class _ReleasesTabState extends ConsumerState<_ReleasesTab> {
+  List<_Release> _releases = const <_Release>[];
+  bool _loading = true;
+  bool _loadStarted = false;
+
+  /// Inline step progress for an in-flight deploy/rollback (null when idle).
+  String? _busyLabel;
+  String? _runningId;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    if (_loadStarted && !mounted) return;
+    _loadStarted = true;
+    final CliService cli = ref.read(cliServiceProvider);
+    List<_Release> releases = const <_Release>[];
+    await for (final CliEvent e in cli.releaseList(widget.domain)) {
+      if (e is DataEvent && e.kind == 'releases') {
+        final List<dynamic> items =
+            (e.value?['items'] as List<dynamic>?) ?? const <dynamic>[];
+        releases = <_Release>[
+          for (final dynamic item in items)
+            if (item is Map<String, dynamic>) _Release.fromJson(item),
+        ];
+      } else if (e is DoneEvent) {
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _releases = releases;
+      _loading = false;
+    });
+  }
+
+  Future<void> _deployAtomic() async {
+    if (_busyLabel != null) return;
+    setState(() {
+      _runningId = '__deploy';
+      _busyLabel = 'Starting atomic deploy…';
+    });
+    await _drive(ref.read(cliServiceProvider).releaseDeploy(widget.domain));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Atomic deploy complete')),
+      );
+    }
+  }
+
+  Future<void> _rollback(String name) async {
+    if (_busyLabel != null) return;
+    setState(() {
+      _runningId = name;
+      _busyLabel = 'Rolling back…';
+    });
+    await _drive(
+        ref.read(cliServiceProvider).releaseRollback(widget.domain, name));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Rolled back to $name')),
+      );
+    }
+  }
+
+  /// Streams [events], surfacing each step label inline, then re-lists.
+  Future<void> _drive(Stream<CliEvent> events) async {
+    await for (final CliEvent e in events) {
+      if (!mounted) return;
+      if (e is StepStart) {
+        setState(() => _busyLabel = e.label);
+      } else if (e is DoneEvent) {
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _busyLabel = null;
+      _runningId = null;
+    });
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool busy = _busyLabel != null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(Insets.lg, Insets.lg, Insets.lg, Insets.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Expanded(
+                child: SectionHeader(
+                  title: 'Releases',
+                  subtitle: 'Atomic deploys with instant rollback',
+                ),
+              ),
+              AppButton(
+                label: 'Deploy (atomic)',
+                icon: Icons.rocket_launch,
+                loading: busy && _runningId == '__deploy',
+                onPressed: busy ? null : _deployAtomic,
+              ),
+            ],
+          ),
+          if (busy && _busyLabel != null) ...<Widget>[
+            const SizedBox(height: Insets.sm),
+            Row(
+              children: <Widget>[
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: Insets.sm),
+                Expanded(
+                  child: Text(
+                    _busyLabel!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: Insets.md),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _releases.isEmpty
+                    ? const Center(child: Text('No releases yet'))
+                    : ListView.separated(
+                        itemCount: _releases.length,
+                        separatorBuilder: (_, __) =>
+                            const SizedBox(height: Insets.sm),
+                        itemBuilder: (BuildContext context, int i) {
+                          final _Release r = _releases[i];
+                          return _ReleaseRow(
+                            release: r,
+                            busy: busy,
+                            rollingBack: _runningId == r.name,
+                            onRollback: () => _rollback(r.name),
+                          )
+                              .animate(delay: Duration(milliseconds: 50 * i))
+                              .fadeIn(duration: AppMotion.base)
+                              .slideY(
+                                begin: 0.12,
+                                curve: AppMotion.emphasized,
+                              );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One release rendered as a [GlassCard]: timestamp, a "current" badge on the
+/// active release, or a "Rollback" button on the others.
+class _ReleaseRow extends StatelessWidget {
+  const _ReleaseRow({
+    required this.release,
+    required this.busy,
+    required this.rollingBack,
+    required this.onRollback,
+  });
+
+  final _Release release;
+  final bool busy;
+  final bool rollingBack;
+  final VoidCallback onRollback;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return GlassCard(
+      padding: const EdgeInsets.all(Insets.md),
+      child: Row(
+        children: <Widget>[
+          Icon(
+            release.current ? Icons.check_circle : Icons.layers_outlined,
+            size: 18,
+            color: release.current
+                ? Palette.ok
+                : theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Text(
+              release.name,
+              style: AppTheme.mono(context, size: 13).copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: Insets.sm),
+          if (release.current)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Palette.ok.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(Insets.radiusSm),
+                border: Border.all(color: Palette.ok.withValues(alpha: 0.5)),
+              ),
+              child: Text(
+                'current',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: Palette.ok,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+          else
+            AppButton(
+              label: 'Rollback',
+              icon: Icons.history,
+              tonal: true,
+              loading: rollingBack,
+              onPressed: busy ? null : onRollback,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The deploy-diff preview dialog: runs `diff <domain>` and shows the commits
+/// ahead plus pending migrations (or "Already up to date").
+class _DiffDialog extends ConsumerStatefulWidget {
+  const _DiffDialog({required this.domain});
+  final String domain;
+
+  @override
+  ConsumerState<_DiffDialog> createState() => _DiffDialogState();
+}
+
+class _DiffDialogState extends ConsumerState<_DiffDialog> {
+  bool _loading = true;
+  Map<String, dynamic>? _diff;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    final CliService cli = ref.read(cliServiceProvider);
+    Map<String, dynamic>? diff;
+    await for (final CliEvent e in cli.deployDiff(widget.domain)) {
+      if (e is DataEvent && e.kind == 'deploy_diff') {
+        diff = e.value;
+      } else if (e is DoneEvent) {
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _diff = diff;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Map<String, dynamic>? d = _diff;
+    final int ahead = (d?['ahead'] as num?)?.toInt() ?? 0;
+    final List<GitCommit> commits = <GitCommit>[
+      for (final dynamic c in (d?['commits'] as List<dynamic>?) ?? const <dynamic>[])
+        if (c is Map<String, dynamic>) GitCommit.fromJson(c),
+    ];
+    final List<String> migrations = <String>[
+      for (final dynamic m in (d?['migrations'] as List<dynamic>?) ?? const <dynamic>[])
+        m.toString(),
+    ];
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Insets.radiusLg),
+      ),
+      title: Row(
+        children: <Widget>[
+          Icon(Icons.difference_outlined,
+              color: theme.colorScheme.primary, size: 20),
+          const SizedBox(width: Insets.sm),
+          const Text('Preview changes'),
+        ],
+      ),
+      content: SizedBox(
+        width: 480,
+        child: _loading
+            ? const SizedBox(
+                height: 120,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            : d == null
+                ? const Text('Could not compute the diff.')
+                : ahead == 0
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          const Icon(
+                            Icons.check_circle,
+                            color: Palette.ok,
+                            size: 20,
+                          ),
+                          const SizedBox(width: Insets.sm),
+                          Text(
+                            'Already up to date',
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(color: Palette.ok),
+                          ),
+                        ],
+                      )
+                    : SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              '${d['from'] ?? '?'} → ${d['to'] ?? '?'} '
+                              '($ahead commit${ahead == 1 ? '' : 's'})',
+                              style: AppTheme.mono(context, size: 13).copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: Insets.md),
+                            for (final GitCommit c in commits)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.only(bottom: Insets.sm),
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    Text(
+                                      c.short,
+                                      style: AppTheme.mono(
+                                        context,
+                                        size: 12,
+                                        color: theme.colorScheme.primary,
+                                      ),
+                                    ),
+                                    const SizedBox(width: Insets.sm),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: <Widget>[
+                                          Text(
+                                            c.subject,
+                                            style: theme.textTheme.bodyMedium
+                                                ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          Text(
+                                            '${c.author} · ${c.relative}',
+                                            style: theme.textTheme.labelSmall
+                                                ?.copyWith(
+                                              color: theme
+                                                  .colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            const SizedBox(height: Insets.sm),
+                            Text(
+                              'Pending migrations',
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: Insets.xs),
+                            if (migrations.isEmpty)
+                              Text(
+                                'No pending migrations',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              )
+                            else
+                              for (final String m in migrations)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 2),
+                                  child: Row(
+                                    children: <Widget>[
+                                      const Icon(
+                                        Icons.schema_outlined,
+                                        size: 14,
+                                        color: Palette.warn,
+                                      ),
+                                      const SizedBox(width: Insets.sm),
+                                      Expanded(
+                                        child: Text(
+                                          m,
+                                          style: AppTheme.mono(context,
+                                              size: 12),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                          ],
+                        ),
+                      ),
+      ),
+      actions: <Widget>[
+        AppButton(
+          label: 'Close',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
       ],
     );
   }
@@ -1309,6 +1780,7 @@ class _AuditTab extends ConsumerWidget {
       runAudit: () => cli.audit(domain),
       runFix: (String id) => cli.auditFix(id, domain),
       runFixAll: () => cli.auditFixAll(domain),
+      runHistory: () => cli.auditHistory(domain),
       autoRun: autoRun,
     );
   }
