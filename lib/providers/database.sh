@@ -12,8 +12,11 @@
 # Requires a server selected via ssh_use_server.
 
 # db_gen_password — 24-char alnum password (no quoting hazards in SQL/.env).
+# Reads a finite chunk of randomness and uses `cut` (which consumes all of its
+# input) so no stage closes the pipe early — important under `set -o pipefail`,
+# where a SIGPIPE'd `tr` reading /dev/urandom would otherwise abort the caller.
 db_gen_password() {
-  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24
+  head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-24
 }
 
 # db_is_present — returns 0 if a MariaDB/MySQL server is installed & reachable.

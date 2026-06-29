@@ -25,7 +25,9 @@ cmd_rollback() {
   # Find the deploy to undo (latest, successful or not).
   local latest; latest="$(history_current "$domain")"
   if [[ -z "$latest" ]]; then
-    latest="$(history_list "$domain" | head -1)"
+    # Take the first line without `| head` (which can SIGPIPE the ssh producer
+    # under pipefail). Capture all, then slice the first line.
+    latest="$(history_list "$domain")"; latest="${latest%%$'\n'*}"
   fi
   [[ -n "$latest" ]] || die "No deploy history for '${domain}' — nothing to roll back."
 

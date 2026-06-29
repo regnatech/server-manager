@@ -159,6 +159,9 @@ t_eq "env user"  "$(kv_get "$APP/.env" DB_USERNAME)" clkuser
 t_eq "env pass"  "$(kv_get "$APP/.env" DB_PASSWORD)" sekret123
 t_eq "env kept"  "$(kv_get "$APP/.env" APP_NAME)" Demo
 P="$(db_gen_password)"; t_eq "genpass length" "${#P}" 24
+# Must not abort under pipefail+set -e (regression: tr|head -c SIGPIPE'd → 141).
+( set -eo pipefail; pp="$(db_gen_password)"; [[ ${#pp} -eq 24 ]] ) \
+  && t_eq "genpass pipefail-safe" ok ok || t_eq "genpass pipefail-safe" fail ok
 unset -f ssh_script
 
 # ---------------------------------------------------------------------------
