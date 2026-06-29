@@ -35,6 +35,7 @@ source "$ROOT/lib/commands/metrics.sh"
 source "$ROOT/lib/commands/git.sh"
 source "$ROOT/lib/commands/logs.sh"
 source "$ROOT/lib/commands/diff.sh"
+source "$ROOT/lib/commands/release.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -466,6 +467,15 @@ MIGJSON="$(_diff_migrations_json "$(printf 'database/migrations/2026_06_01_00000
 t_true "diff migrations: array"   grep -qE '^\[.*\]$' <<<"$MIGJSON"
 t_true "diff migrations: basename" grep -q '"2026_06_01_000000_create_orders.php"' <<<"$MIGJSON"
 t_eq   "diff migrations: empty"   "$(_diff_migrations_json '')" "[]"
+
+# --- atomic releases ---
+RNAMES="$(printf '20260629_120000\n20260628_090000\n20260627_080000\n')"
+RLJSON="$(_release_list_json "$RNAMES" 20260628_090000)"
+t_true "release list: current flagged" grep -q '"name":"20260628_090000","current":true' <<<"$RLJSON"
+t_true "release list: others not current" grep -q '"name":"20260629_120000","current":false' <<<"$RLJSON"
+# keep 2 newest + current; names a..e newest-first, current=d
+RPRUNE="$(_release_prune_select "$(printf 'a\nb\nc\nd\ne\n')" 2 d)"
+t_eq "release prune: removes beyond keep except current" "$(printf '%s' "$RPRUNE" | tr '\n' ' ' | sed 's/ $//')" "c e"
 
 # Finding registration yields a valid JSON object with a boolean 'fixable'.
 _AUDIT_ITEMS=()
