@@ -91,8 +91,17 @@ cmd_update() {
       || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Cache rebuild failed."
   fi
 
-  # 10. Restart services.
+  # 10. (Re)apply scheduler + workers, then restart services.
   section "Services"
+  if _is_laravel_like "$fw"; then
+    local slug; slug="$(slugify "$domain")"
+    [[ "$SITE_SCHEDULER" == 1 ]] && { step "Ensuring scheduler cron" workers_install_scheduler "$slug" "$app_root" "$php" || true; }
+    if [[ "$SITE_HORIZON" == 1 ]]; then
+      step "Ensuring Horizon worker" _upd_ensure_worker "$slug" "$app_root" "$php" horizon || true
+    elif [[ "$SITE_QUEUE" == 1 ]]; then
+      step "Ensuring queue worker" _upd_ensure_worker "$slug" "$app_root" "$php" queue || true
+    fi
+  fi
   if _is_laravel_like "$fw" || is_php_framework "$fw"; then
     step "Restarting PHP-FPM" deploy_restart_php_fpm "$php" || warn "PHP-FPM restart reported a problem."
   fi
@@ -137,6 +146,13 @@ cmd_update() {
     "${sha_after:+To commit   : ${sha_after}}" \
     "Backup      : ${backup_dir}" \
     "Completed in: ${dur}s"
+}
+
+# _upd_ensure_worker <slug> <app_root> <php> <mode> — install supervisor (if
+# needed) and (re)write the worker program.
+_upd_ensure_worker() {
+  local slug="$1" app_root="$2" php="$3" mode="$4"
+  workers_ensure_supervisor && workers_install_supervisor "$slug" "$app_root" "$php" "$mode"
 }
 
 # _render_healthcheck "<name|status|detail lines>"

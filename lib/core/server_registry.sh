@@ -59,6 +59,31 @@ registry_resolve_for_site() {
   registry_resolve "$override"
 }
 
+# pick_site — interactively choose a site from the local index; echoes the
+# chosen domain on stdout. Returns non-zero if there are no sites.
+pick_site() {
+  local entries; entries="$(index_all)"
+  [[ -n "$entries" ]] || { err "No sites registered yet. Run 'server add' first."; return 1; }
+  local domains=() servers=() d s
+  while IFS=$'\t' read -r d s || [[ -n "$d" ]]; do
+    [[ -z "$d" ]] && continue
+    domains+=("$d"); servers+=("$s")
+  done <<<"$entries"
+  say "  Select a site:" >&2
+  local i
+  for i in "${!domains[@]}"; do
+    printf '    %2d) %s  %s(%s)%s\n' $((i+1)) "${domains[$i]}" "$C_GREY" "${servers[$i]}" "$C_RESET" >&2
+  done
+  local sel
+  while :; do
+    sel="$(ask "Number" "1")"
+    if [[ "$sel" =~ ^[0-9]+$ ]] && (( sel >= 1 && sel <= ${#domains[@]} )); then
+      printf '%s' "${domains[$((sel-1))]}"; return 0
+    fi
+    warn "Enter a number between 1 and ${#domains[@]}."
+  done
+}
+
 # _local_keypair — echo the path to a usable local SSH private key, generating
 # an ed25519 one if the user has none. (pub key is "<path>.pub")
 _local_keypair() {

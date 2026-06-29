@@ -25,6 +25,7 @@ source "$ROOT/lib/discovery/discover.sh"
 source "$ROOT/lib/providers/nginx.sh"
 source "$ROOT/lib/providers/database.sh"
 source "$ROOT/lib/providers/php.sh"
+source "$ROOT/lib/providers/workers.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -199,6 +200,12 @@ CUR=dbenv;      db_set_env_creds /a n u p >/dev/null 2>&1 || true
 CUR=dbwriteenv; printf 'X=1\n' | db_write_env /a >/dev/null 2>&1 || true
 CUR=phpinstall; php_install 8.3 >/dev/null 2>&1 || true
 CUR=phpsocket;  php_socket_for 8.3 >/dev/null 2>&1 || true
+CUR=dbimport;   db_run_import /a /tmp/x.sql.gz >/dev/null 2>&1 || true
+CUR=dbexport;   db_run_export /a >/dev/null 2>&1 || true
+CUR=sched;      workers_install_scheduler clk /a 8.3 >/dev/null 2>&1 || true
+CUR=supens;     workers_ensure_supervisor >/dev/null 2>&1 || true
+CUR=whorizon;   workers_install_supervisor clk /a 8.3 horizon >/dev/null 2>&1 || true
+CUR=wqueue;     workers_install_supervisor clk /a 8.3 queue >/dev/null 2>&1 || true
 CUR=sitewrite;  printf 'domain=d\nframework=laravel\n' | remote_site_write d >/dev/null 2>&1 || true
 CUR=nginx;      nginx_render d /r laravel /s '' | nginx_install d >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi

@@ -93,6 +93,57 @@ echo ".env written."
 EOF
 }
 
+# db_run_import <app_root> <remote_file>
+#   Load a SQL file that already sits on the server into the site's database,
+#   reading the connection from the app's .env. Handles .gz transparently.
+#   Runs as the login user (the app DB user has full rights on its own schema).
+db_run_import() {
+  local app_root="$1" remote="$2"
+  ssh_script <<EOF
+set -e
+envf=$(shq "$app_root/.env")
+[ -f "\$envf" ] || { echo "no .env at \$envf — provision the database first" >&2; exit 1; }
+get() { grep -E "^\$1=" "\$envf" | head -1 | cut -d= -f2- | tr -d '"'"'"'' | tr -d '[:space:]'; }
+conn="\$(get DB_CONNECTION)"; dbh="\$(get DB_HOST)"; dbp="\$(get DB_PORT)"
+dbn="\$(get DB_DATABASE)"; dbu="\$(get DB_USERNAME)"; dbpw="\$(get DB_PASSWORD)"
+f=$(shq "$remote")
+[ -f "\$f" ] || { echo "uploaded file not found: \$f" >&2; exit 1; }
+decomp="cat"; case "\$f" in *.gz) decomp="gzip -dc";; esac
+[ -n "\$dbn" ] || { echo "DB_DATABASE is empty in .env" >&2; exit 1; }
+case "\$conn" in
+  mysql|mariadb)
+    \$decomp "\$f" | MYSQL_PWD="\$dbpw" mysql -h "\${dbh:-127.0.0.1}" -P "\${dbp:-3306}" -u "\$dbu" "\$dbn";;
+  pgsql|postgres|postgresql)
+    \$decomp "\$f" | PGPASSWORD="\$dbpw" psql -h "\${dbh:-127.0.0.1}" -p "\${dbp:-5432}" -U "\$dbu" "\$dbn";;
+  *) echo "unsupported DB_CONNECTION '\$conn' (only mysql/mariadb/pgsql)" >&2; exit 1;;
+esac
+echo "imported into \$dbn"
+EOF
+}
+
+# db_run_export <app_root>  — stream a gzipped dump of the site's database to
+# STDOUT (the caller redirects it to a local file). Reads creds from .env.
+db_run_export() {
+  local app_root="$1"
+  ssh_script <<EOF
+set -e
+envf=$(shq "$app_root/.env")
+[ -f "\$envf" ] || { echo "no .env at \$envf" >&2; exit 1; }
+get() { grep -E "^\$1=" "\$envf" | head -1 | cut -d= -f2- | tr -d '"'"'"'' | tr -d '[:space:]'; }
+conn="\$(get DB_CONNECTION)"; dbh="\$(get DB_HOST)"; dbp="\$(get DB_PORT)"
+dbn="\$(get DB_DATABASE)"; dbu="\$(get DB_USERNAME)"; dbpw="\$(get DB_PASSWORD)"
+[ -n "\$dbn" ] || { echo "DB_DATABASE is empty in .env" >&2; exit 1; }
+case "\$conn" in
+  mysql|mariadb)
+    MYSQL_PWD="\$dbpw" mysqldump --single-transaction --quick --no-tablespaces \
+      -h "\${dbh:-127.0.0.1}" -P "\${dbp:-3306}" -u "\$dbu" "\$dbn" | gzip;;
+  pgsql|postgres|postgresql)
+    PGPASSWORD="\$dbpw" pg_dump -h "\${dbh:-127.0.0.1}" -p "\${dbp:-5432}" -U "\$dbu" "\$dbn" | gzip;;
+  *) echo "unsupported DB_CONNECTION '\$conn'" >&2; exit 1;;
+esac
+EOF
+}
+
 # db_set_env_creds <app_root> <name> <user> <pass>
 #   Set/replace the DB_* keys in the app's .env (in place), defaulting the
 #   connection to mysql on 127.0.0.1:3306.

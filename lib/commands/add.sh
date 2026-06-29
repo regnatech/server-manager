@@ -136,6 +136,10 @@ cmd_add() {
   DB_REPORT=""
   _add_database "$domain" "$app_root" "$fw"
 
+  # 5b. Scheduler (cron) + background workers (supervisor) for Laravel.
+  WORKERS_REPORT=""
+  _add_workers "$domain" "$app_root" "$fw" "$php_version"
+
   # 6. HTTPS
   section "TLS"
   local https=0 le_email=""
@@ -177,6 +181,8 @@ cmd_add() {
     "${git_remote:+Repository  : ${git_remote} (${git_branch})}" \
     "${php_version:+PHP         : ${php_version}}" \
     "${DB_REPORT:+Database    : ${DB_REPORT}}" \
+    "${DISC_SCHEDULER:+Scheduler   : cron (every minute)}" \
+    "${WORKERS_REPORT:+Worker      : ${WORKERS_REPORT} (supervisor)}" \
     "URL         : ${proto}://${domain}" \
     "Next        : server update ${domain}"
 }
@@ -238,11 +244,62 @@ _add_database() {
   say "    DB_USERNAME=${db_user}"
   say "    DB_PASSWORD=${db_pass}"
   DB_REPORT="${db_name} / ${db_user} (password set in .env)"
+
+  # Optionally seed the fresh database from a local SQL dump.
+  if [[ "${SRVMGR_ASSUME_YES:-0}" != "1" ]] && confirm "Import an existing SQL dump into this database now?" "n"; then
+    local dump; dump="$(ask "Path to .sql or .sql.gz file (on this machine)" "")"
+    [[ -n "$dump" ]] && _db_do_import "$domain" "$app_root" "$dump" || true
+  fi
 }
 
 _add_write_env() {
   local app_root="$1" content="$2"
   printf '%s' "$content" | db_write_env "$app_root"
+}
+
+# _add_workers <domain> <app_root> <framework> <php_version>
+#   Set up the Laravel scheduler cron and (optionally) a queue/Horizon worker.
+#   Sets DISC_SCHEDULER/DISC_QUEUE/DISC_HORIZON so the choices persist into the
+#   site config (used by 'server update' to restart the right services).
+_add_workers() {
+  local domain="$1" app_root="$2" fw="$3" ver="$4"
+  _is_laravel_like "$fw" || return 0
+  section "Scheduler & workers"
+  local slug; slug="$(slugify "$domain")"
+
+  if confirm "Set up the Laravel scheduler (runs 'artisan schedule:run' every minute)?" "Y"; then
+    if step "Installing scheduler cron" workers_install_scheduler "$slug" "$app_root" "$ver"; then
+      DISC_SCHEDULER=1
+    else
+      warn "Could not install the scheduler cron."
+    fi
+  fi
+
+  # Decide the worker mode (use detection when available, else ask).
+  local mode="none"
+  if [[ "$DISC_HORIZON" == "1" ]]; then
+    mode="horizon"; info "Horizon detected."
+  elif [[ "$DISC_QUEUE" == "1" ]]; then
+    mode="queue"; info "Queue usage detected."
+  elif [[ "${SRVMGR_ASSUME_YES:-0}" != "1" ]]; then
+    say "  Background worker:  1) none   2) queue:work   3) Horizon" >&2
+    case "$(ask "Choose" "1")" in
+      2) mode="queue";;
+      3) mode="horizon";;
+      *) mode="none";;
+    esac
+  fi
+
+  if [[ "$mode" != "none" ]]; then
+    step "Ensuring supervisor is installed" workers_ensure_supervisor \
+      || warn "supervisor could not be installed — worker not configured."
+    if step "Configuring ${mode} worker" workers_install_supervisor "$slug" "$app_root" "$ver" "$mode"; then
+      if [[ "$mode" == "horizon" ]]; then DISC_HORIZON=1; else DISC_QUEUE=1; fi
+      WORKERS_REPORT="$mode"
+    else
+      warn "Could not configure the ${mode} worker."
+    fi
+  fi
 }
 
 # Build the conf body and write it remotely. Run as a named helper so it can be

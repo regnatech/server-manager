@@ -29,7 +29,15 @@ one install can drive many servers. State of record lives on each server under
   Octane).
 - **MariaDB provisioning** — for Laravel/Statamic it installs MariaDB if
   missing, generates credentials, and writes them into `.env` (or prompts you
-  to paste an `.env` when the project has none).
+  to paste an `.env` when the project has none). Can also seed the database
+  from a SQL dump during the wizard.
+- **PHP-FPM provisioning** — installs the detected PHP version + common Laravel
+  extensions (and Composer) when it isn't already on the server.
+- **Scheduler & workers** — sets up the Laravel scheduler as a `/etc/cron.d`
+  entry and background workers (`queue:work` or **Horizon**) under supervisor,
+  automatically, and re-applies them on every deploy.
+- **Database import/export** — `server db import`/`export` load a `.sql`/`.sql.gz`
+  into a site's database or dump it out; credentials come from the site's `.env`.
 - **Intelligent deploy (`server update`)** — backup → maintenance mode →
   `git pull` → Composer → frontend build → migrate → cache rebuild → restart
   services → health check, with a timed report. Brings the site back online
@@ -109,6 +117,8 @@ server rollback clicketta.site
 | `server import <domain> <root>` | Adopt an already-deployed site (no deploy). |
 | `server logs <site> [nginx\|php\|laravel\|queue] [-n N] [-f]` | Tail remote logs. |
 | `server php <site> [set <ver> \| <args…>]` | Show/switch PHP, or run artisan/php. |
+| `server db import [site] [file]` | Load a `.sql`/`.sql.gz` into a site's database (picks the site if omitted). |
+| `server db export [site] [file]` | Dump a site's database to a local `.sql.gz`. |
 | `server connect <name> user@host[:port] [-i key]` | Register a server. |
 | `server use <name>` | Set the default server. |
 | `server servers` | List registered servers. |

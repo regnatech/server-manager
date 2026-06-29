@@ -92,6 +92,8 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   import <domain> <root>   Adopt an already-deployed site without deploying
   logs <site> [type]       Tail remote logs (nginx|php|laravel|queue)
   php <site> [args...]     Run artisan/php on the site, or show/switch PHP version
+  db import [site] [file]  Import a .sql/.sql.gz dump into a site's database
+  db export [site] [file]  Dump a site's database to a local .sql.gz
 
 ${C_BOLD}SERVER COMMANDS${C_RESET}
   connect <name> user@host Register a server (probes SSH + sudo). Add -p to
@@ -137,6 +139,7 @@ main() {
     import)         _require_cmd_impl cmd_import "$cmd";    cmd_import "$@";;
     logs)           _require_cmd_impl cmd_logs "$cmd";      cmd_logs "$@";;
     php)            _require_cmd_impl cmd_php "$cmd";        cmd_php "$@";;
+    db)             _require_cmd_impl cmd_db "$cmd";         cmd_db "$@";;
 
     *)
       err "Unknown command '${cmd}'."
