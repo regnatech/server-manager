@@ -233,6 +233,13 @@ final deployProvider = StateNotifierProvider.autoDispose
   return DeployController();
 });
 
+/// Per-domain controller for the Git tool's push/branch deploys. Kept distinct
+/// from [deployProvider] so the Git timeline and the Deploy tab don't collide.
+final gitDeployProvider = StateNotifierProvider.autoDispose
+    .family<DeployController, DeployState, String>((ref, domain) {
+  return DeployController();
+});
+
 /// Standalone controller used by the add wizard's Provision step.
 final addProvisionProvider =
     StateNotifierProvider.autoDispose<DeployController, DeployState>((ref) {

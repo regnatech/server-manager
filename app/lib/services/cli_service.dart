@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:math';
+
 import '../transport/cli_event.dart';
 import '../transport/ndjson.dart';
 import '../transport/ssh_session.dart';
@@ -49,6 +52,57 @@ abstract class CliService {
   /// `server --json metrics` → step events then a metrics [DataEvent]
   /// (`kind:"metrics"`, `value` matching `ServerMetrics.fromJson`).
   Stream<CliEvent> metrics();
+
+  /// `server --json git log <domain>` → a commit-graph [DataEvent]
+  /// (`kind:"git_log"`, items matching `GitCommit.fromJson`).
+  Stream<CliEvent> gitLog(String domain);
+
+  /// `server --json git status <domain>` → a working-tree [DataEvent]
+  /// (`kind:"git_status"`, value matching `GitStatus.fromJson`).
+  Stream<CliEvent> gitStatus(String domain);
+
+  /// `server --json git branches <domain>` → a branches [DataEvent]
+  /// (`kind:"git_branches"`, items matching `GitBranch.fromJson`).
+  Stream<CliEvent> gitBranches(String domain);
+
+  /// `server --json git push <domain> --deploy` → a push step then the full
+  /// deploy step stream (reuses the deploy timeline) then a [DoneEvent].
+  Stream<CliEvent> gitPushDeploy(String domain);
+
+  /// `server --json git deploy <domain> <branch>` → fetch/checkout/pull steps
+  /// then the deploy step stream then a [DoneEvent].
+  Stream<CliEvent> gitDeploy(String domain, String branch);
+
+  /// `server --json git branch <domain> <name>` → create+checkout steps then
+  /// a [DoneEvent].
+  Stream<CliEvent> gitCreateBranch(String domain, String name);
+
+  /// `server --json git tag <domain> <name> [message]` → create+push steps
+  /// then a [DoneEvent].
+  Stream<CliEvent> gitCreateTag(String domain, String name, {String? message});
+
+  /// `server --json git pr <domain> <title> [base]` → push+create steps then a
+  /// `kind:"pr"` [DataEvent] (value: url/title/base) then a [DoneEvent]. A
+  /// `done(ok:false)` means the server's `gh` CLI is missing/unauthenticated.
+  Stream<CliEvent> gitCreatePr(String domain, String title, {String base});
+
+  /// `server --json git merge <domain> <branch>` → either a `kind:"git_merge"`
+  /// [DataEvent] (`value.clean == true`) + `done(ok:true)`, or a
+  /// `kind:"git_conflicts"` [DataEvent] (items: path/ours/theirs/conflicted) +
+  /// `done(ok:false)` when the merge conflicts.
+  Stream<CliEvent> gitMerge(String domain, String branch);
+
+  /// `server --json git resolve <domain> <path> --tmp <remoteTmp>` → applies a
+  /// resolved file then `git add`. [content] is uploaded (live) to a temp path
+  /// first. Emits a `kind:"git_resolved"` [DataEvent]
+  /// (`value:{path, remaining}`) then a [DoneEvent].
+  Stream<CliEvent> gitResolve(String domain, String path, String content);
+
+  /// `server --json git merge-continue <domain>` → commits the merge + done.
+  Stream<CliEvent> gitMergeContinue(String domain);
+
+  /// `server --json git merge-abort <domain>` → aborts the merge + done.
+  Stream<CliEvent> gitMergeAbort(String domain);
 
   /// `server --json add --plan` → emits a plan [DataEvent].
   Stream<CliEvent> addPlan();
@@ -137,6 +191,67 @@ class LiveCliService implements CliService {
 
   @override
   Stream<CliEvent> metrics() => _stream(<String>['metrics']);
+
+  @override
+  Stream<CliEvent> gitLog(String domain) =>
+      _stream(<String>['git', 'log', domain]);
+
+  @override
+  Stream<CliEvent> gitStatus(String domain) =>
+      _stream(<String>['git', 'status', domain]);
+
+  @override
+  Stream<CliEvent> gitBranches(String domain) =>
+      _stream(<String>['git', 'branches', domain]);
+
+  @override
+  Stream<CliEvent> gitPushDeploy(String domain) =>
+      _stream(<String>['git', 'push', domain, '--deploy']);
+
+  @override
+  Stream<CliEvent> gitDeploy(String domain, String branch) =>
+      _stream(<String>['git', 'deploy', domain, branch]);
+
+  @override
+  Stream<CliEvent> gitCreateBranch(String domain, String name) =>
+      _stream(<String>['git', 'branch', domain, name]);
+
+  @override
+  Stream<CliEvent> gitCreateTag(String domain, String name, {String? message}) =>
+      _stream(<String>[
+        'git',
+        'tag',
+        domain,
+        name,
+        if (message != null && message.isNotEmpty) message,
+      ]);
+
+  @override
+  Stream<CliEvent> gitCreatePr(String domain, String title,
+          {String base = 'main'}) =>
+      _stream(<String>['git', 'pr', domain, title, base]);
+
+  @override
+  Stream<CliEvent> gitMerge(String domain, String branch) =>
+      _stream(<String>['git', 'merge', domain, branch]);
+
+  @override
+  Stream<CliEvent> gitResolve(String domain, String path, String content) async* {
+    // Upload the resolved file to a unique temp path, then ask the backend to
+    // apply it and `git add` the resolution.
+    final int rand = Random().nextInt(1 << 32);
+    final String tmp = '/tmp/sm-resolve-${rand.toRadixString(16)}';
+    await _session.uploadFile(utf8.encode(content), tmp);
+    yield* _stream(<String>['git', 'resolve', domain, path, '--tmp', tmp]);
+  }
+
+  @override
+  Stream<CliEvent> gitMergeContinue(String domain) =>
+      _stream(<String>['git', 'merge-continue', domain]);
+
+  @override
+  Stream<CliEvent> gitMergeAbort(String domain) =>
+      _stream(<String>['git', 'merge-abort', domain]);
 
   @override
   Stream<CliEvent> addPlan() => _stream(<String>['add', '--plan']);

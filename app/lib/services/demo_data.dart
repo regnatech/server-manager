@@ -160,6 +160,203 @@ class DemoData {
 
   static const String _repo = 'clicketta.git';
 
+  /// A realistic `git log` graph (item shape matches `GitCommit.fromJson`).
+  /// Includes a merge commit (two parents) and a tag/branch ref mix. [head]
+  /// names the branch the `HEAD ->` ref points at; [extraTags] are demo-created
+  /// tags appended to the tip commit's refs.
+  static List<Map<String, dynamic>> gitLog({
+    String head = 'main',
+    List<String> extraTags = const <String>[],
+  }) =>
+      <Map<String, dynamic>>[
+        <String, dynamic>{
+          'hash': 'a77b3e1f4c8d2b9e0a1f6c7d8e9f0a1b2c3d4e5f',
+          'short': 'a77b3e1',
+          'parents': <String>['4f1c2a9'],
+          'author': 'Dana Ortiz',
+          'date': '2026-06-29 18:42',
+          'relative': '2h ago',
+          'subject': 'Fix checkout rate limiting',
+          'refs': <String>[
+            'HEAD -> $head',
+            'origin/main',
+            for (final String t in extraTags) 'tag: $t',
+          ],
+        },
+        <String, dynamic>{
+          'hash': '4f1c2a9b8e7d6c5a4b3c2d1e0f9a8b7c6d5e4f3a',
+          'short': '4f1c2a9',
+          'parents': <String>['9b2d11c', 'c0ffee1'],
+          'author': 'Dana Ortiz',
+          'date': '2026-06-29 12:10',
+          'relative': '8h ago',
+          'subject': "Merge branch 'develop'",
+          'refs': <String>['tag: v1.4.0'],
+        },
+        <String, dynamic>{
+          'hash': 'c0ffee1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e',
+          'short': 'c0ffee1',
+          'parents': <String>['7a3e9d2'],
+          'author': 'Priya Nair',
+          'date': '2026-06-28 21:14',
+          'relative': 'yesterday',
+          'subject': 'Add idempotency keys to webhook handler',
+          'refs': <String>[],
+        },
+        <String, dynamic>{
+          'hash': '9b2d11c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9',
+          'short': '9b2d11c',
+          'parents': <String>['7a3e9d2'],
+          'author': 'Marco Steele',
+          'date': '2026-06-28 16:03',
+          'relative': 'yesterday',
+          'subject': 'Bump deps (laravel/framework 11.9, vite 5.3)',
+          'refs': <String>[],
+        },
+        <String, dynamic>{
+          'hash': '7a3e9d2b1c0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d',
+          'short': '7a3e9d2',
+          'parents': <String>['1d5f8b0'],
+          'author': 'Priya Nair',
+          'date': '2026-06-27 09:02',
+          'relative': '2 days ago',
+          'subject': 'Cache product listing query',
+          'refs': <String>[],
+        },
+        <String, dynamic>{
+          'hash': '1d5f8b0a9c8b7d6e5f4a3b2c1d0e9f8a7b6c5d4e',
+          'short': '1d5f8b0',
+          'parents': <String>['e2c4a77'],
+          'author': 'Dana Ortiz',
+          'date': '2026-06-26 14:48',
+          'relative': '3 days ago',
+          'subject': 'Refactor order state machine',
+          'refs': <String>['tag: v1.3.2'],
+        },
+        <String, dynamic>{
+          'hash': 'e2c4a77b6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a',
+          'short': 'e2c4a77',
+          'parents': <String>['b9911aa'],
+          'author': 'Marco Steele',
+          'date': '2026-06-25 11:20',
+          'relative': '4 days ago',
+          'subject': 'Add database index to orders.created_at',
+          'refs': <String>[],
+        },
+        <String, dynamic>{
+          'hash': 'b9911aa0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6',
+          'short': 'b9911aa',
+          'parents': <String>[],
+          'author': 'Priya Nair',
+          'date': '2026-06-24 08:55',
+          'relative': '5 days ago',
+          'subject': 'Initial Laravel scaffolding',
+          'refs': <String>[],
+        },
+      ];
+
+  /// `git status` value (matches `GitStatus.fromJson`). [ahead] is overridden
+  /// by [DemoCliService] once a push has run this session; [branch] follows the
+  /// currently checked-out branch (e.g. after a `git branch` create).
+  static Map<String, dynamic> gitStatus({
+    int ahead = 2,
+    String branch = 'main',
+  }) =>
+      <String, dynamic>{
+        'branch': branch,
+        'upstream': branch == 'main' ? 'origin/main' : '',
+        'ahead': ahead,
+        'behind': 0,
+        'clean': false,
+        'dirty': <String>[
+          'app/Http/Kernel.php',
+          'resources/views/home.blade.php',
+        ],
+      };
+
+  /// `git branches` items (match `GitBranch.fromJson`). [current] is the
+  /// checked-out branch; [extra] are demo-created local branches appended in
+  /// order.
+  static List<Map<String, dynamic>> gitBranches({
+    String current = 'main',
+    List<String> extra = const <String>[],
+  }) {
+    final List<String> locals = <String>[
+      'main',
+      'develop',
+      'feature/checkout-v2',
+      ...extra,
+    ];
+    return <Map<String, dynamic>>[
+      for (final String name in locals)
+        <String, dynamic>{
+          'name': name,
+          'current': name == current,
+          'remote': false,
+        },
+      <String, dynamic>{'name': 'origin/main', 'current': false, 'remote': true},
+      <String, dynamic>{
+        'name': 'origin/develop',
+        'current': false,
+        'remote': true,
+      },
+    ];
+  }
+
+  /// Two realistic merge conflicts (item shape: path/ours/theirs/conflicted)
+  /// produced when merging `develop` into `main` in the demo.
+  static List<Map<String, dynamic>> gitConflicts() => <Map<String, dynamic>>[
+        <String, dynamic>{
+          'path': 'composer.json',
+          'ours': '{\n'
+              '    "require": {\n'
+              '        "php": "^8.3",\n'
+              '        "laravel/framework": "^11.9",\n'
+              '        "laravel/sanctum": "^4.0"\n'
+              '    }\n'
+              '}\n',
+          'theirs': '{\n'
+              '    "require": {\n'
+              '        "php": "^8.3",\n'
+              '        "laravel/framework": "^11.10",\n'
+              '        "laravel/horizon": "^5.24"\n'
+              '    }\n'
+              '}\n',
+          'conflicted': '{\n'
+              '    "require": {\n'
+              '        "php": "^8.3",\n'
+              '<<<<<<< HEAD\n'
+              '        "laravel/framework": "^11.9",\n'
+              '        "laravel/sanctum": "^4.0"\n'
+              '=======\n'
+              '        "laravel/framework": "^11.10",\n'
+              '        "laravel/horizon": "^5.24"\n'
+              '>>>>>>> develop\n'
+              '    }\n'
+              '}\n',
+        },
+        <String, dynamic>{
+          'path': 'resources/views/home.blade.php',
+          'ours': '<x-layout>\n'
+              '    <h1>Welcome back</h1>\n'
+              '    <p>Your dashboard is ready.</p>\n'
+              '</x-layout>\n',
+          'theirs': '<x-layout>\n'
+              '    <h1>Welcome to Clicketta</h1>\n'
+              '    <p>Book tickets in seconds.</p>\n'
+              '</x-layout>\n',
+          'conflicted': '<x-layout>\n'
+              '<<<<<<< HEAD\n'
+              '    <h1>Welcome back</h1>\n'
+              '    <p>Your dashboard is ready.</p>\n'
+              '=======\n'
+              '    <h1>Welcome to Clicketta</h1>\n'
+              '    <p>Book tickets in seconds.</p>\n'
+              '>>>>>>> develop\n'
+              '</x-layout>\n',
+        },
+      ];
+
   /// Cron entries for the scheduler tab.
   static const List<Map<String, dynamic>> cron = <Map<String, dynamic>>[
     <String, dynamic>{
@@ -452,6 +649,23 @@ class DemoCliService implements CliService {
   /// subsequent [audit] omits them and the posture visibly improves.
   static final Set<String> _fixedAuditIds = <String>{};
 
+  /// Domains pushed in this demo session, so a subsequent [gitStatus] reports
+  /// `ahead:0` and the working tree looks freshly synced after a push+deploy.
+  static final Set<String> _pushed = <String>{};
+
+  /// Demo-session Git mutations, keyed by domain: the currently checked-out
+  /// branch, extra local branches created, and extra tags created. Lets a
+  /// `git branch`/`git tag` visibly update subsequent log/status/branches.
+  static final Map<String, String> _currentBranch = <String, String>{};
+  static final Map<String, List<String>> _createdBranches =
+      <String, List<String>>{};
+  static final Map<String, List<String>> _createdTags = <String, List<String>>{};
+
+  /// Paths still unresolved in an in-progress demo merge, keyed by domain. Set
+  /// when [gitMerge] hits conflicts; decremented by [gitResolve]; cleared by
+  /// [gitMergeContinue]/[gitMergeAbort].
+  static final Map<String, Set<String>> _conflicts = <String, Set<String>>{};
+
   @override
   Future<VersionEvent> version() async {
     await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -664,6 +878,201 @@ class DemoCliService implements CliService {
     yield StepEnd(id: 'fix-$id', ok: true, dur: 0.7);
     _fixedAuditIds.add(id);
     await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  String _branchOf(String domain) => _currentBranch[domain] ?? 'main';
+
+  @override
+  Stream<CliEvent> gitLog(String domain) async* {
+    yield BannerEvent(label: 'Reading git history for $domain');
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(
+      kind: 'git_log',
+      items: DemoData.gitLog(
+        head: _branchOf(domain),
+        extraTags: _createdTags[domain] ?? const <String>[],
+      ),
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitStatus(String domain) async* {
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(
+      kind: 'git_status',
+      value: DemoData.gitStatus(
+        ahead: _pushed.contains(domain) ? 0 : 2,
+        branch: _branchOf(domain),
+      ),
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitBranches(String domain) async* {
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(
+      kind: 'git_branches',
+      items: DemoData.gitBranches(
+        current: _branchOf(domain),
+        extra: _createdBranches[domain] ?? const <String>[],
+      ),
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitPushDeploy(String domain) async* {
+    yield BannerEvent(label: 'Pushing & deploying $domain');
+    yield const StepStart(id: 'push', label: 'Pushing main to origin');
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    yield const LogEvent(level: 'ok', msg: 'main -> main (2 commits)');
+    yield const StepEnd(id: 'push', ok: true, dur: 0.7);
+    _pushed.add(domain);
+    // Reuse the standard deploy sequence so the timeline animates identically.
+    // Skip the recorded banner/done — they're emitted around this run already.
+    yield* _replay(_deployBody(domain));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitDeploy(String domain, String branch) async* {
+    yield BannerEvent(label: 'Deploying $branch to $domain');
+    for (final (String, String) s in <(String, String)>[
+      ('fetch', 'Fetching origin'),
+      ('checkout', 'Checking out $branch'),
+      ('pull', 'Pulling $branch'),
+    ]) {
+      yield StepStart(id: s.$1, label: s.$2);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      yield StepEnd(id: s.$1, ok: true, dur: 0.5);
+      await Future<void>.delayed(_shortGap);
+    }
+    yield* _replay(_deployBody(domain));
+    yield const DoneEvent(ok: true);
+  }
+
+  /// The recorded deploy steps with the leading banner and trailing done
+  /// stripped, so a push/branch-deploy can wrap them in its own framing.
+  static List<CliEvent> _deployBody(String domain) =>
+      DemoData.deployEvents(domain)
+          .where((CliEvent e) => e is! BannerEvent && e is! DoneEvent)
+          .toList();
+
+  @override
+  Stream<CliEvent> gitCreateBranch(String domain, String name) async* {
+    yield BannerEvent(label: 'Creating branch $name on $domain');
+    yield StepStart(id: 'branch', label: 'Creating & checking out $name');
+    await Future<void>.delayed(const Duration(milliseconds: 650));
+    yield StepEnd(id: 'branch', ok: true, dur: 0.6);
+    // Record so subsequent branches/log/status reflect the new HEAD.
+    (DemoCliService._createdBranches[domain] ??= <String>[]).add(name);
+    DemoCliService._currentBranch[domain] = name;
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitCreateTag(String domain, String name,
+      {String? message}) async* {
+    yield BannerEvent(label: 'Tagging $domain');
+    yield StepStart(id: 'tag', label: 'Creating tag $name');
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    yield StepEnd(id: 'tag', ok: true, dur: 0.5);
+    yield StepStart(id: 'tag-push', label: 'Pushing tag $name to origin');
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    yield StepEnd(id: 'tag-push', ok: true, dur: 0.6);
+    (DemoCliService._createdTags[domain] ??= <String>[]).add(name);
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitCreatePr(String domain, String title,
+      {String base = 'main'}) async* {
+    yield BannerEvent(label: 'Opening pull request for $domain');
+    final String branch = _branchOf(domain);
+    yield StepStart(id: 'pr-push', label: 'Pushing $branch to origin');
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    yield StepEnd(id: 'pr-push', ok: true, dur: 0.6);
+    yield StepStart(id: 'pr-create', label: 'Creating pull request (gh)');
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    yield StepEnd(id: 'pr-create', ok: true, dur: 0.7);
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield DataEvent(
+      kind: 'pr',
+      value: <String, dynamic>{
+        'url': 'https://github.com/acme/clicketta/pull/42',
+        'title': title,
+        'base': base,
+      },
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitMerge(String domain, String branch) async* {
+    yield BannerEvent(label: 'Merging $branch into ${_branchOf(domain)}');
+    yield StepStart(id: 'merge', label: 'Merging $branch');
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    // `develop` conflicts in the demo; everything else merges cleanly.
+    if (branch == 'develop') {
+      yield const StepEnd(
+        id: 'merge',
+        ok: false,
+        dur: 0.7,
+        err: 'merge conflicts',
+      );
+      yield const LogEvent(
+        level: 'warn',
+        msg: 'CONFLICT (content): 2 files need manual resolution',
+      );
+      final List<Map<String, dynamic>> conflicts = DemoData.gitConflicts();
+      _conflicts[domain] = <String>{
+        for (final Map<String, dynamic> c in conflicts) c['path'] as String,
+      };
+      await Future<void>.delayed(_shortGap);
+      yield DataEvent(kind: 'git_conflicts', items: conflicts);
+      yield const DoneEvent(ok: false);
+      return;
+    }
+    yield const StepEnd(id: 'merge', ok: true, dur: 0.7);
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(kind: 'git_merge', value: <String, dynamic>{'clean': true});
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitResolve(String domain, String path, String content) async* {
+    yield StepStart(id: 'resolve', label: 'Resolving $path');
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+    final Set<String> remaining = _conflicts[domain] ??= <String>{};
+    remaining.remove(path);
+    yield const StepEnd(id: 'resolve', ok: true, dur: 0.4);
+    yield DataEvent(
+      kind: 'git_resolved',
+      value: <String, dynamic>{'path': path, 'remaining': remaining.length},
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitMergeContinue(String domain) async* {
+    yield StepStart(id: 'merge-continue', label: 'Completing merge');
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    _conflicts.remove(domain);
+    yield const StepEnd(id: 'merge-continue', ok: true, dur: 0.6);
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> gitMergeAbort(String domain) async* {
+    yield StepStart(id: 'merge-abort', label: 'Aborting merge');
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    _conflicts.remove(domain);
+    yield const StepEnd(id: 'merge-abort', ok: true, dur: 0.4);
     yield const DoneEvent(ok: true);
   }
 
