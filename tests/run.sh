@@ -14,6 +14,7 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export SRVMGR_TEMPLATES="$ROOT/templates"
 
+source "$ROOT/lib/core/json.sh"
 source "$ROOT/lib/core/ui.sh"
 source "$ROOT/lib/core/util.sh"
 source "$ROOT/lib/core/config.sh"
@@ -217,6 +218,64 @@ CUR=cronrm;     workers_cron_remove clk 2 >/dev/null 2>&1 || true
 CUR=sitewrite;  printf 'domain=d\nframework=laravel\n' | remote_site_write d >/dev/null 2>&1 || true
 CUR=nginx;      nginx_render d /r laravel /s '' | nginx_install d >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
+
+# ---------------------------------------------------------------------------
+section_t "JSON event protocol (--json mode emitter)"
+
+# json_escape handles the characters JSON requires.
+t_eq "escape quote"      "$(json_escape 'a"b')"          'a\"b'
+t_eq "escape backslash"  "$(json_escape 'a\b')"          'a\\b'
+t_eq "escape tab"        "$(json_escape "$(printf 'a\tb')")" 'a\tb'
+t_eq "json_str quotes"   "$(json_str 'hi')"              '"hi"'
+t_eq "json_object"       "$(json_object a 1 b 2)"        '{"a":"1","b":"2"}'
+
+# json_mode reflects the env switch.
+( SRVMGR_JSON=1; json_mode ); t_eq "json_mode on"  "$?" 0
+( unset SRVMGR_JSON; json_mode ); t_eq "json_mode off" "$?" 1
+
+# The emitter functions, under SRVMGR_JSON=1, produce one valid JSON object per
+# line. We validate with a tiny pure-bash brace/quote-aware check (no jq/node):
+# every emitted line must start with '{' and end with '}' and have balanced,
+# unescaped double quotes.
+json_line_ok() {
+  local l="$1"
+  [[ "$l" == '{'*'}' ]] || return 1
+  # count unescaped quotes — must be even
+  local q="${l//\\\"/}"; q="${q//[!\"]/}"
+  (( ${#q} % 2 == 0 ))
+}
+
+emit_capture() {
+  ( SRVMGR_JSON=1; exec 3>&1; _UI_EVENT_FD=3; "$@" )
+}
+
+JOUT="$(emit_capture section 'Deploy')"
+t_eq   "section event"   "$JOUT" '{"t":"section","label":"Deploy"}'
+t_true "section valid"   json_line_ok "$JOUT"
+
+JOUT="$(emit_capture warn 'has "quotes" here')"
+t_true "warn valid json" json_line_ok "$JOUT"
+t_eq   "warn level"      "$(printf '%s' "$JOUT" | grep -c '"level":"warn"')" 1
+
+# step success + failure both emit start/end pairs with an ok flag.
+JOUT="$(emit_capture step 'noop' true)"
+t_eq   "step lines"      "$(printf '%s\n' "$JOUT" | grep -c '^{')" 2
+t_true "step_start"      grep -q '"t":"step_start"' <<<"$JOUT"
+t_true "step_end ok"     grep -q '"t":"step_end".*"ok":true' <<<"$JOUT"
+
+JOUT="$(emit_capture step 'boom' bash -c 'exit 3')"
+t_true "step_end fail"   grep -q '"t":"step_end".*"ok":false' <<<"$JOUT"
+
+# report_box splits "Label : value" lines into a fields object.
+JOUT="$(emit_capture report_box 'Done' 'URL : https://x.test' 'PHP : 8.3')"
+t_true "report event"    grep -q '"t":"report"' <<<"$JOUT"
+t_true "report keeps url" grep -q '"URL":"https://x.test"' <<<"$JOUT"
+t_true "report fields"    grep -q '"PHP":"8.3"' <<<"$JOUT"
+
+# Every emitted line passes the structural check.
+ALL_OK=1
+while IFS= read -r _l; do [[ -z "$_l" ]] && continue; json_line_ok "$_l" || ALL_OK=0; done <<<"$JOUT"
+t_eq "all report lines valid" "$ALL_OK" 1
 
 # ---------------------------------------------------------------------------
 printf '\n────────────────────────────\n'

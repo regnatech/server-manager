@@ -42,19 +42,40 @@ fi
 # Logging helpers (all to stderr so stdout stays clean for captured data)
 # ---------------------------------------------------------------------------
 
-say()  { printf '%s\n' "$*" >&2; }
-info() { printf '%s%s%s %s\n' "$C_BLUE" "$GLYPH_INFO" "$C_RESET" "$*" >&2; }
-ok()   { printf '%s%s%s %s\n' "$C_GREEN" "$GLYPH_OK" "$C_RESET" "$*" >&2; }
-warn() { printf '%s%s %s%s\n' "$C_YELLOW" "$GLYPH_WARN" "$*" "$C_RESET" >&2; }
-err()  { printf '%s%s %s%s\n' "$C_RED" "$GLYPH_ERR" "$*" "$C_RESET" >&2; }
+# Monotonic step counter so the UI can correlate step_start/step_end events.
+_UI_STEP_N=0
+
+# In JSON mode, events go to fd 3 (wired to the real stdout by bin/server) so
+# that command-substitution capture of fd 1 inside step_capture() never mixes
+# captured data with the event stream. ui_emit() is the single sink.
+ui_emit() {
+  if [[ -n "${_UI_EVENT_FD:-}" ]]; then
+    json_emit "$1" >&"$_UI_EVENT_FD"
+  else
+    json_emit "$1"
+  fi
+}
+
+# _ui_log <level> <message> — emit a {"t":"log"} event in JSON mode.
+_ui_log() {
+  ui_emit "{\"t\":\"log\",$(json_kv_string level "$1"),$(json_kv_string msg "$2")}"
+}
+
+say()  { if json_mode; then _ui_log info "$*"; else printf '%s\n' "$*" >&2; fi; }
+info() { if json_mode; then _ui_log info "$*"; else printf '%s%s%s %s\n' "$C_BLUE" "$GLYPH_INFO" "$C_RESET" "$*" >&2; fi; }
+ok()   { if json_mode; then _ui_log ok   "$*"; else printf '%s%s%s %s\n' "$C_GREEN" "$GLYPH_OK" "$C_RESET" "$*" >&2; fi; }
+warn() { if json_mode; then _ui_log warn "$*"; else printf '%s%s %s%s\n' "$C_YELLOW" "$GLYPH_WARN" "$*" "$C_RESET" >&2; fi; }
+err()  { if json_mode; then _ui_log err  "$*"; else printf '%s%s %s%s\n' "$C_RED" "$GLYPH_ERR" "$*" "$C_RESET" >&2; fi; }
 
 # Section header
 section() {
+  if json_mode; then ui_emit "{\"t\":\"section\",$(json_kv_string label "$*")}"; return; fi
   printf '\n%s%s%s %s%s\n' "$C_BOLD" "$C_CYAN" "$GLYPH_ARROW" "$*" "$C_RESET" >&2
 }
 
 # Banner shown at the top of interactive commands
 banner() {
+  if json_mode; then ui_emit "{\"t\":\"banner\",$(json_kv_string label "${1:-}")}"; return; fi
   printf '\n%s%s  server-manager%s  %s%s%s\n\n' \
     "$C_BOLD" "$C_MAGENTA" "$C_RESET" "$C_GREY" "${1:-}" "$C_RESET" >&2
 }
@@ -71,6 +92,21 @@ step() {
   local logfile start end dur rc=0
   logfile="$(mktemp "${TMPDIR:-/tmp}/srvmgr-step.XXXXXX")"
   start="$(_ui_now)"
+
+  if json_mode; then
+    local id="s$(( ++_UI_STEP_N ))"
+    ui_emit "{\"t\":\"step_start\",$(json_kv_string id "$id"),$(json_kv_string label "$msg")}"
+    ( "$@" ) >"$logfile" 2>&1 || rc=$?
+    end="$(_ui_now)"; dur="$(_ui_elapsed "$start" "$end")"
+    local ok_b=true; (( rc == 0 )) || ok_b=false
+    local errf=""
+    if (( rc != 0 )) && [[ -s "$logfile" ]]; then
+      errf=",$(json_kv_string err "$(tail -n 20 "$logfile")")"
+    fi
+    ui_emit "{\"t\":\"step_end\",$(json_kv_string id "$id"),$(json_kv_raw ok "$ok_b"),$(json_kv_raw dur "$dur")${errf}}"
+    rm -f "$logfile"
+    return $rc
+  fi
 
   if [[ "${UI_TTY}" == "1" ]]; then
     ( "$@" ) >"$logfile" 2>&1 &
@@ -117,6 +153,22 @@ step_capture() {
   outfile="$(mktemp "${TMPDIR:-/tmp}/srvmgr-cap.XXXXXX")"
   errfile="$(mktemp "${TMPDIR:-/tmp}/srvmgr-cap.XXXXXX")"
   start="$(_ui_now)"
+
+  if json_mode; then
+    local id="s$(( ++_UI_STEP_N ))"
+    ui_emit "{\"t\":\"step_start\",$(json_kv_string id "$id"),$(json_kv_string label "$msg")}"
+    ( "$@" ) >"$outfile" 2>"$errfile" || rc=$?
+    end="$(_ui_now)"; dur="$(_ui_elapsed "$start" "$end")"
+    local ok_b=true; (( rc == 0 )) || ok_b=false
+    local errf=""
+    if (( rc != 0 )) && [[ -s "$errfile" ]]; then
+      errf=",$(json_kv_string err "$(tail -n 20 "$errfile")")"
+    fi
+    ui_emit "{\"t\":\"step_end\",$(json_kv_string id "$id"),$(json_kv_raw ok "$ok_b"),$(json_kv_raw dur "$dur")${errf}}"
+    cat "$outfile"   # forward captured data to fd 1 for $(...) capture
+    rm -f "$outfile" "$errfile"
+    return $rc
+  fi
 
   if [[ "${UI_TTY}" == "1" ]]; then
     ( "$@" ) >"$outfile" 2>"$errfile" &
@@ -227,6 +279,10 @@ present() {
 
 progress_bar() {
   local cur="$1" total="$2" label="${3:-}"
+  if json_mode; then
+    ui_emit "{\"t\":\"progress\",$(json_kv_raw cur "${cur:-0}"),$(json_kv_raw total "${total:-0}"),$(json_kv_string label "$label")}"
+    return 0
+  fi
   [[ "${UI_TTY}" != "1" ]] && return 0
   local width=30 filled
   (( total == 0 )) && total=1
@@ -247,6 +303,26 @@ progress_bar() {
 
 report_box() {
   local title="$1"; shift
+  if json_mode; then
+    # Each line is "Label : value"; split on the first ":" into a fields object.
+    local fields="{" first=1 line k v
+    for line in "$@"; do
+      [[ -z "$line" ]] && continue
+      if [[ "$line" == *:* ]]; then
+        k="${line%%:*}"; v="${line#*:}"
+      else
+        k="$line"; v=""
+      fi
+      # trim surrounding whitespace
+      k="${k#"${k%%[![:space:]]*}"}"; k="${k%"${k##*[![:space:]]}"}"
+      v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+      (( first )) || fields+=","
+      fields+="$(json_kv_string "$k" "$v")"; first=0
+    done
+    fields+="}"
+    ui_emit "{\"t\":\"report\",$(json_kv_string title "$title"),$(json_kv_raw fields "$fields")}"
+    return
+  fi
   # Collect non-empty lines (optional fields are passed as "${var:+...}").
   local lines=() line width=${#title}
   for line in "$@"; do

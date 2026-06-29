@@ -6,6 +6,9 @@
 
 cmd_list() {
   local entries; entries="$(index_all)"
+
+  if json_mode; then _list_json "$entries"; return; fi
+
   if [[ -z "$entries" ]]; then
     info "No sites yet. Add one with 'server add'."
     return 0
@@ -39,4 +42,42 @@ cmd_list() {
     printf '%-26s %s%-10s%s %-12s %-5s %s%-18s%s\n' \
       "$domain" "$C_CYAN" "$server" "$C_RESET" "$fw" "$tls" "$C_GREY" "$last" "$C_RESET" >&2
   done <<<"$entries"
+}
+
+# _list_json <index-entries> — emit a {"t":"data","kind":"sites","items":[...]}
+# event. Each site is enriched from its remote config when the server is
+# reachable; unreachable/unknown servers still yield an item with health set.
+_list_json() {
+  local entries="$1"
+  local items="[" first=1
+  local domain server fw branch tls last health cur status
+  while IFS=$'\t' read -r domain server || [[ -n "$domain" ]]; do
+    [[ -z "$domain" ]] && continue
+    fw=""; branch=""; tls=false; last=""; health="unknown"
+    if registry_exists "$server"; then
+      ssh_use_server "$server"
+      if site_load "$domain" 2>/dev/null; then
+        fw="$SITE_FRAMEWORK"; branch="$SITE_GIT_BRANCH"
+        [[ "$SITE_HTTPS" == "1" ]] && tls=true
+        health="ok"
+        cur="$(history_current "$domain" 2>/dev/null)"
+        if [[ -n "$cur" ]]; then
+          status="$(history_get "$domain" "$cur" status 2>/dev/null)"
+          last="${cur} (${status:-?})"
+        fi
+      else
+        health="missing"
+      fi
+    else
+      health="unreachable"
+    fi
+    (( first )) || items+=","
+    items+="{$(json_kv_string domain "$domain"),$(json_kv_string server "$server"),"
+    items+="$(json_kv_string framework "$fw"),$(json_kv_string branch "$branch"),"
+    items+="$(json_kv_raw tls "$tls"),$(json_kv_string last_deploy "$last"),"
+    items+="$(json_kv_string health "$health")}"
+    first=0
+  done <<<"$entries"
+  items+="]"
+  ui_emit "{\"t\":\"data\",$(json_kv_string kind sites),$(json_kv_raw items "$items")}"
 }

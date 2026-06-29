@@ -31,7 +31,7 @@ export SRVMGR_ROOT SRVMGR_LIB SRVMGR_TEMPLATES
 # rest. Globs tolerate phases that haven't been built yet.
 # ---------------------------------------------------------------------------
 # shellcheck source=/dev/null
-for _f in "$SRVMGR_LIB"/core/ui.sh "$SRVMGR_LIB"/core/util.sh \
+for _f in "$SRVMGR_LIB"/core/json.sh "$SRVMGR_LIB"/core/ui.sh "$SRVMGR_LIB"/core/util.sh \
           "$SRVMGR_LIB"/core/config.sh "$SRVMGR_LIB"/core/ssh.sh \
           "$SRVMGR_LIB"/core/server_registry.sh; do
   [[ -f "$_f" ]] && source "$_f"
@@ -53,12 +53,37 @@ config_init_local
 OPT_SERVER=""
 declare -a ARGS=()
 
+# Switch on the machine-readable event protocol that the desktop UI drives over
+# SSH. Events go to fd 3 (wired here to the real stdout) so that internal
+# command-substitution capture of fd 1 never corrupts the stream. JSON mode is
+# implicitly non-interactive: prompts resolve from the --answers bundle.
+_enable_json_mode() {
+  export SRVMGR_JSON=1
+  export SRVMGR_ASSUME_YES=1
+  exec 3>&1
+  _UI_EVENT_FD=3
+  NO_COLOR=1; ui_init_colors
+  # Emit a terminal done event reflecting the final exit status.
+  trap '_json_on_exit' EXIT
+}
+
+_json_on_exit() {
+  local rc=$?
+  json_mode || return 0
+  local ok=true; (( rc == 0 )) || ok=false
+  ui_emit "{\"t\":\"done\",$(json_kv_raw ok "$ok")}"
+}
+
 parse_global_args() {
   while (( $# )); do
     case "$1" in
       --server) OPT_SERVER="${2:-}"; shift 2;;
       --server=*) OPT_SERVER="${1#*=}"; shift;;
       -y|--yes) export SRVMGR_ASSUME_YES=1; shift;;
+      --json) _enable_json_mode; shift;;
+      --answers) SRVMGR_ANSWERS="${2:-}"; export SRVMGR_ANSWERS; shift 2;;
+      --plan) export SRVMGR_PHASE=plan; shift;;
+      --apply) export SRVMGR_PHASE=apply; shift;;
       --no-color) NO_COLOR=1; ui_init_colors; shift;;
       -h|--help) ARGS=(help); return;;
       -V|--version) ARGS=(version); return;;
@@ -128,7 +153,12 @@ main() {
 
   case "$cmd" in
     help|"")        usage;;
-    version)        printf 'server-manager %s\n' "$SRVMGR_VERSION";;
+    version)
+      if json_mode; then
+        ui_emit "{\"t\":\"version\",$(json_kv_string contract "$SRVMGR_JSON_CONTRACT"),$(json_kv_string version "$SRVMGR_VERSION")}"
+      else
+        printf 'server-manager %s\n' "$SRVMGR_VERSION"
+      fi;;
 
     connect)        cmd_server_connect "$@";;
     use)            cmd_server_use "$@";;
