@@ -52,6 +52,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Map<String, List<_Field>>? _bySection;
   bool _loading = true;
   bool _failed = false;
+  String? _error;
 
   CliService get _cli => ref.read(cliServiceProvider);
 
@@ -69,26 +70,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
     final Map<String, List<_Field>> grouped = <String, List<_Field>>{};
     bool gotData = false;
+    String? failure;
     try {
       await for (final CliEvent e in _cli.configList()) {
-        if (e case DataEvent(kind: 'config', items: final List<dynamic>? items)
-            when items != null) {
-          gotData = true;
-          for (final dynamic raw in items) {
-            if (raw is! Map) continue;
-            final Map<String, dynamic> m = raw.cast<String, dynamic>();
-            final _Field f = _Field.fromJson(m);
-            (grouped[f.section] ??= <_Field>[]).add(f);
-          }
+        switch (e) {
+          case DataEvent(kind: 'config', items: final List<dynamic>? items)
+              when items != null:
+            gotData = true;
+            for (final dynamic raw in items) {
+              if (raw is! Map) continue;
+              final Map<String, dynamic> m = raw.cast<String, dynamic>();
+              final _Field f = _Field.fromJson(m);
+              (grouped[f.section] ??= <_Field>[]).add(f);
+            }
+          case LogEvent(level: 'err', msg: final String m):
+            failure = m;
+          case DoneEvent(ok: false):
+            failure ??= 'The config command failed.';
+          default:
+            break;
         }
       }
-    } catch (_) {
+    } catch (e) {
+      failure = e.toString();
       gotData = false;
     }
     if (!mounted) return;
     setState(() {
       _loading = false;
       _failed = !gotData;
+      _error = gotData ? null : failure;
       _bySection = gotData ? grouped : null;
     });
   }
@@ -127,7 +138,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_failed || _bySection == null) {
-      return _ErrorState(onRetry: _load);
+      return _ErrorState(onRetry: _load, message: _error);
     }
     final Map<String, List<_Field>> groups = _bySection!;
 
@@ -530,12 +541,14 @@ class _SetPill extends StatelessWidget {
 
 /// Shown when the initial `config list` fails, with a retry affordance.
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.onRetry});
+  const _ErrorState({required this.onRetry, this.message});
   final VoidCallback onRetry;
+  final String? message;
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final String? msg = message;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(Insets.lg),
@@ -552,6 +565,17 @@ class _ErrorState extends StatelessWidget {
               'Could not load settings',
               style: theme.textTheme.titleMedium,
             ),
+            if (msg != null && msg.trim().isNotEmpty) ...<Widget>[
+              const SizedBox(height: Insets.xs),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 480),
+                child: Text(
+                  msg,
+                  textAlign: TextAlign.center,
+                  style: AppTheme.mono(context, size: 12),
+                ),
+              ),
+            ],
             const SizedBox(height: Insets.lg),
             AppButton(
               label: 'Retry',

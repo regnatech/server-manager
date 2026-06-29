@@ -26,6 +26,17 @@ _choose_framework() {
 }
 
 cmd_add() {
+  # GUI/headless two-phase contract: `--json add --plan` emits a form spec and
+  # `--json add --apply --answers <file>` provisions non-interactively. Both
+  # bypass the interactive prompts below (which read stdin and can't run over a
+  # non-TTY SSH exec).
+  if json_mode; then
+    case "${SRVMGR_PHASE:-}" in
+      plan)  _add_plan_emit;        return 0;;
+      apply) _add_apply_json "$@";  return $?;;
+    esac
+  fi
+
   local domain="${1:-}" root="${2:-}"
   local server; server="$(registry_resolve "$OPT_SERVER")"
   ssh_use_server "$server"
@@ -333,4 +344,168 @@ EOF
 _add_install_nginx() {
   local domain="$1" rendered="$2"
   printf '%s\n' "$rendered" | nginx_install "$domain"
+}
+
+# ---------------------------------------------------------------------------
+# JSON (GUI) two-phase add: plan + apply
+# ---------------------------------------------------------------------------
+
+# _add_str_array <item>... -> ["item",...]  (JSON string array)
+_add_str_array() {
+  local out="[" first=1 a
+  for a in "$@"; do
+    (( first )) || out+=","
+    out+="$(json_str "$a")"
+    first=0
+  done
+  out+="]"
+  printf '%s' "$out"
+}
+
+# _add_field <id> <type> <label> <value> <required-bool> [options-json] [when-json]
+#   -> one encoded plan field object.
+_add_field() {
+  local o
+  o="{$(json_kv_string id "$1"),$(json_kv_string type "$2"),"
+  o+="$(json_kv_string label "$3"),$(json_kv_string value "$4"),"
+  o+="$(json_kv_raw required "$5")"
+  [[ -n "${6:-}" ]] && o+=",$(json_kv_raw options "$6")"
+  [[ -n "${7:-}" ]] && o+=",$(json_kv_raw when "$7")"
+  o+="}"
+  printf '%s' "$o"
+}
+
+# _add_plan_emit — emit the `kind:"plan"` form spec the GUI renders. Static
+# (no root known yet, so no discovery): asks for everything up front.
+_add_plan_emit() {
+  local fw_opts server_opts default_server="" servers_field=""
+  fw_opts="$(_add_str_array laravel symfony statamic wordpress static \
+    nodejs nextjs nuxt react vue reverse_proxy)"
+
+  # Offer the registered servers as an enum when any exist; otherwise the apply
+  # phase falls back to the resolved default.
+  read_lines registry_list_names
+  if (( ${#READ_LINES[@]} > 0 )); then
+    server_opts="$(_add_str_array "${READ_LINES[@]}")"
+    default_server="$(registry_default)"
+    [[ -n "$default_server" ]] || default_server="${READ_LINES[0]}"
+    servers_field="$(_add_field server enum 'Target server' "$default_server" true "$server_opts"),"
+  fi
+
+  local tls_when; tls_when="{$(json_kv_string field tls),$(json_kv_string equals true)}"
+  local le_email; le_email="$(global_get le_email 2>/dev/null || true)"
+
+  local fields="["
+  fields+="$(_add_field domain domain 'Domain name' '' true),"
+  fields+="$servers_field"
+  fields+="$(_add_field framework enum 'Framework' laravel true "$fw_opts"),"
+  fields+="$(_add_field path abspath 'Web root (e.g. /var/www/site/public)' /var/www true),"
+  fields+="$(_add_field repo string 'Git repository URL (blank to skip)' '' false),"
+  fields+="$(_add_field branch string 'Branch' main false),"
+  fields+="$(_add_field php_version string 'PHP version (PHP apps only)' 8.3 false),"
+  fields+="$(_add_field tls bool 'Provision HTTPS (Let'\''s Encrypt)' true false),"
+  fields+="$(_add_field tls_email string 'Let'\''s Encrypt email' "$le_email" true "" "$tls_when")"
+  fields+="]"
+
+  local value; value="{$(json_kv_string command add),$(json_kv_raw fields "$fields")}"
+  ui_emit "{\"t\":\"data\",$(json_kv_string kind plan),$(json_kv_raw value "$value")}"
+}
+
+# _add_apply_json — provision a site from the uploaded answer bundle, streaming
+# the normal section/step/report events. Non-interactive (no prompts). Database
+# and worker setup are left to their dedicated commands.
+_add_apply_json() {
+  local af="${SRVMGR_ANSWERS:-}"
+  [[ -n "$af" && -f "$af" ]] || die "Apply phase needs --answers <file>."
+  local json; json="$(cat "$af")"
+
+  local domain server fw repo branch root php_version tls tls_email upstream
+  domain="$(json_flat_get "$json" domain || true)"
+  server="$(json_flat_get "$json" server || true)"
+  fw="$(json_flat_get "$json" framework || true)"
+  repo="$(json_flat_get "$json" repo || true)"
+  branch="$(json_flat_get "$json" branch || true)"; branch="${branch:-main}"
+  root="$(json_flat_get "$json" path || true)"
+  php_version="$(json_flat_get "$json" php_version || true)"
+  php_version="${php_version:-8.3}"
+  tls="$(json_flat_get "$json" tls || true)"
+  tls_email="$(json_flat_get "$json" tls_email || true)"
+  fw="${fw:-static}"
+
+  [[ -n "$domain" ]] || die "A domain is required."
+  is_valid_domain "$domain" || die "'${domain}' is not a valid domain."
+  [[ -n "$root" ]] || die "A web root is required."
+  is_abs_path "$root" || die "Web root must be an absolute path."
+
+  [[ -n "$server" ]] || server="$(registry_resolve "")"
+  ssh_use_server "$server"
+  banner "add — server: ${server}"
+  step_capture "Connecting to ${server}" ssh_probe >/dev/null \
+    || die "Cannot reach server '${server}'."
+  step "Preparing ${REMOTE_ETC}" remote_ensure_dirs \
+    || die "Could not create ${REMOTE_ETC} (need root or passwordless sudo)."
+  remote_site_exists "$domain" \
+    && die "Site '${domain}' already exists. Use 'server update ${domain}'."
+
+  # Application root: PHP front-controller frameworks serve from public/.
+  local app_root="$root"
+  if { _is_laravel_like "$fw" || [[ "$fw" == symfony ]]; } && [[ "$root" == */public ]]; then
+    app_root="${root%/public}"
+  fi
+
+  # PHP-FPM socket (install the runtime if it isn't there yet).
+  local php_socket=""
+  if is_php_framework "$fw"; then
+    php_socket="$(php_socket_for "$php_version" 2>/dev/null || true)"
+    if [[ -z "$php_socket" ]]; then
+      step "Installing PHP ${php_version}" php_install "$php_version" \
+        || warn "PHP ${php_version} install failed — set the socket later."
+      php_socket="$(php_socket_for "$php_version" 2>/dev/null || true)"
+    fi
+    [[ -n "$php_socket" ]] || php_socket="/run/php/php${php_version}-fpm.sock"
+  fi
+
+  # Reverse-proxy upstream for node/SSR/proxy sites.
+  upstream=""
+  case "$fw" in
+    nodejs|nextjs|nuxt|reverse_proxy)
+      upstream="$(json_flat_get "$json" upstream || true)"
+      upstream="${upstream:-127.0.0.1:3000}";;
+  esac
+
+  local https=0
+  case "$tls" in true|1|yes|Yes|TRUE) https=1;; esac
+  [[ "$https" == 1 && -n "$tls_email" ]] && global_set le_email "$tls_email"
+
+  # Discovery globals consumed by _add_write_conf — unset in the JSON path.
+  DISC_REDIS=""; DISC_QUEUE=""; DISC_HORIZON=""; DISC_SCHEDULER=""; DISC_OCTANE=""
+
+  section "Saving configuration"
+  local now; now="$(timestamp)"
+  step "Writing ${REMOTE_ETC}/sites/${domain}.conf" \
+    _add_write_conf "$domain" "$root" "$app_root" "$fw" "$php_version" \
+      "$php_socket" "$repo" "$branch" "" "$https" "$tls_email" "$upstream" "$now" \
+    || die "Failed to write remote config."
+  index_set "$domain" "$server"
+
+  section "Provisioning"
+  local rendered
+  rendered="$(nginx_render "$domain" "$root" "$fw" "$php_socket" "$upstream")"
+  step "Installing nginx vhost" _add_install_nginx "$domain" "$rendered" \
+    || die "nginx provisioning failed."
+  if [[ "$https" == 1 ]]; then
+    step "Requesting certificate for ${domain}" nginx_enable_https "$domain" "$tls_email" \
+      || warn "HTTPS setup failed — site is live over HTTP. Re-run 'server ssl ${domain}'."
+  fi
+
+  local proto="http"; [[ "$https" == 1 ]] && proto="https"
+  report_box "Site added: ${domain}" \
+    "Server      : ${server}" \
+    "Framework   : $(framework_label "$fw")" \
+    "Web root    : ${root}" \
+    "App root    : ${app_root}" \
+    "${repo:+Repository  : ${repo} (${branch})}" \
+    "${php_version:+PHP         : ${php_version}}" \
+    "URL         : ${proto}://${domain}" \
+    "Next        : server update ${domain}"
 }

@@ -32,6 +32,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
   bool _hasRun = false;
   String _statusLabel = '';
   ServerMetrics? _metrics;
+  String? _error;
 
   @override
   void initState() {
@@ -44,9 +45,11 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
     setState(() {
       _running = true;
       _hasRun = true;
+      _error = null;
       _statusLabel = 'Reading server metrics…';
     });
     ServerMetrics? result;
+    String? failure;
     try {
       final CliService cli = ref.read(cliServiceProvider);
       await for (final CliEvent e in cli.metrics()) {
@@ -58,15 +61,25 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
             setState(() => _statusLabel = l);
           case DataEvent(kind: 'metrics', value: final Map<String, dynamic>? v):
             if (v != null) result = ServerMetrics.fromJson(v);
+          // Remember the backend's reason so a failed read shows *why* instead
+          // of spinning forever (e.g. "No server selected").
+          case LogEvent(level: 'err', msg: final String m):
+            failure = m;
+          case DoneEvent(ok: false):
+            failure ??= 'The metrics command failed.';
           default:
             break;
         }
       }
+    } catch (e) {
+      failure = e.toString();
     } finally {
       if (mounted) {
         setState(() {
           _running = false;
           _metrics = result ?? _metrics;
+          // Only an error if we still have nothing to show.
+          _error = (result == null && _metrics == null) ? failure : null;
         });
       }
     }
@@ -86,6 +99,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
     }
 
     final bool showProgress = (_running || !_hasRun) && m == null;
+    final bool showError = !_running && _hasRun && m == null && _error != null;
 
     return Scaffold(
       appBar: AppBar(
@@ -103,11 +117,11 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
           const SizedBox(width: Insets.sm),
         ],
       ),
-      body: showProgress
-          ? _Progress(label: _statusLabel)
-          : (m == null
+      body: showError
+          ? _MetricsError(message: _error!, onRetry: _run)
+          : (showProgress || m == null)
               ? _Progress(label: _statusLabel)
-              : _MetricsBody(metrics: m)),
+              : _MetricsBody(metrics: m),
     );
   }
 }
@@ -144,6 +158,67 @@ class _Progress extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Shown when the metrics read fails: the backend's reason + a retry, plus a
+/// hint to register a server when none is selected (the common first-run case).
+class _MetricsError extends StatelessWidget {
+  const _MetricsError({required this.message, required this.onRetry});
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool noServer = message.toLowerCase().contains('no server');
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Insets.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Icon(Icons.monitor_heart_outlined, size: 48, color: Palette.err),
+            const SizedBox(height: Insets.md),
+            Text(
+              'Could not read server metrics',
+              style: theme.textTheme.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: Insets.xs),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Text(
+                message,
+                textAlign: TextAlign.center,
+                style: AppTheme.mono(context, size: 12),
+              ),
+            ),
+            if (noServer) ...<Widget>[
+              const SizedBox(height: Insets.md),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 480),
+                child: Text(
+                  'No server is registered on the control node yet. On the box run '
+                  '`server connect` to register it, then `server use <name>` to set '
+                  'the default.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: Insets.md),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }

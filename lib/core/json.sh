@@ -102,3 +102,42 @@ json_event() {
 
 # json_mode — true when the UI/headless JSON protocol is active.
 json_mode() { [[ "${SRVMGR_JSON:-0}" == "1" ]]; }
+
+# json_flat_get <json> <key> — read one string value out of a *flat* JSON object
+# (the shape the UI uploads as the `add --apply` answer bundle: {"k":"v",...},
+# all values string-typed). Prints the decoded value and returns 0 if found,
+# else returns 1 with no output. Dependency-free (no jq); handles \" \\ \/ \n \t
+# \r \b \f escapes. Not a general JSON parser — only top-level string pairs.
+json_flat_get() {
+  local json="$1" want="$2"
+  local n=${#json} i ch buf="" instr=0 esc=0 expect_key=1 curkey=""
+  for (( i=0; i<n; i++ )); do
+    ch="${json:i:1}"
+    if (( instr )); then
+      if (( esc )); then
+        case "$ch" in
+          n) buf+=$'\n';; t) buf+=$'\t';; r) buf+=$'\r';;
+          b) buf+=$'\b';; f) buf+=$'\f';;
+          '"') buf+='"';; '\') buf+='\';; '/') buf+='/';;
+          *) buf+="$ch";;
+        esac
+        esc=0
+      elif [[ "$ch" == '\' ]]; then
+        esc=1
+      elif [[ "$ch" == '"' ]]; then
+        instr=0
+        if (( expect_key )); then
+          curkey="$buf"; expect_key=0
+        else
+          if [[ "$curkey" == "$want" ]]; then printf '%s' "$buf"; return 0; fi
+          expect_key=1
+        fi
+      else
+        buf+="$ch"
+      fi
+    elif [[ "$ch" == '"' ]]; then
+      instr=1; buf=""
+    fi
+  done
+  return 1
+}

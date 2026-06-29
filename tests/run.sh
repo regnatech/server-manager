@@ -262,6 +262,23 @@ t_eq "escape tab"        "$(json_escape "$(printf 'a\tb')")" 'a\tb'
 t_eq "json_str quotes"   "$(json_str 'hi')"              '"hi"'
 t_eq "json_object"       "$(json_object a 1 b 2)"        '{"a":"1","b":"2"}'
 
+# json_flat_get reads string values out of the flat answer bundle (add --apply),
+# decoding escapes; missing keys return non-zero.
+JFG='{"domain":"site.test","framework":"laravel","repo":"git@h:me/a.git","tls":"true","secret":"p\"a\\ss"}'
+t_eq "flat get domain"   "$(json_flat_get "$JFG" domain)"    'site.test'
+t_eq "flat get repo"     "$(json_flat_get "$JFG" repo)"      'git@h:me/a.git'
+t_eq "flat get bool"     "$(json_flat_get "$JFG" tls)"       'true'
+t_eq "flat get escapes"  "$(json_flat_get "$JFG" secret)"    'p"a\ss'
+t_false "flat get miss"  json_flat_get "$JFG" nope
+
+# add --plan emits one well-formed plan data line then done(ok:true).
+PLAN_OUT="$(SRVMGR_JSON=1 SRVMGR_PHASE=plan bash "$ROOT/bin/server" --json add --plan 2>/dev/null)"
+t_eq   "plan line count" "$(printf '%s\n' "$PLAN_OUT" | grep -c '^{')" 2
+t_true "plan is data"    grep -q '"t":"data","kind":"plan"' <<<"$PLAN_OUT"
+t_true "plan has domain" grep -q '"id":"domain","type":"domain"' <<<"$PLAN_OUT"
+t_true "plan when-cond"  grep -q '"when":{"field":"tls","equals":"true"}' <<<"$PLAN_OUT"
+t_true "plan done ok"    grep -q '"t":"done","ok":true' <<<"$PLAN_OUT"
+
 # json_mode reflects the env switch.
 ( SRVMGR_JSON=1; json_mode ); t_eq "json_mode on"  "$?" 0
 ( unset SRVMGR_JSON; json_mode ); t_eq "json_mode off" "$?" 1
