@@ -13,6 +13,8 @@ needed). The same Flutter codebase builds for Windows and macOS.
 | **Add site wizard** — animated stepper (Discover → Configure → Provision → Done); the form is generated from the backend's `--plan` field spec | ![add](04-add.png) |
 | **Site detail** — tabbed management (Overview · Deploy · Cron · Workers · Logs · SSL) | ![site](05-site.png) |
 | **Terminal** — interactive remote shell (xterm) on the control node; live SSH PTY via dartssh2, with an offline demo shell | ![terminal](07-terminal.png) |
+| **Security audit (per-site)** — findings grouped by severity with one-click fixes, in the site workspace | ![audit](08-audit.png) |
+| **Security audit (server-wide)** — host hardening reachable from the dashboard | ![server-audit](09-server-audit.png) |
 
 ## How these were generated
 
