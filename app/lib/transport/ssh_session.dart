@@ -59,6 +59,31 @@ abstract class SshSession {
   /// Uploads [bytes] to [remotePath] over SFTP, overwriting if present.
   Future<void> uploadFile(List<int> bytes, String remotePath);
 
+  /// Opens an interactive PTY shell on the control node sized to
+  /// [columns] x [rows]. The returned [RemoteShell] streams decoded output and
+  /// accepts keystrokes. Not supported on the web build (see the stub).
+  Future<RemoteShell> openShell({int columns, int rows});
+
   /// Closes the SSH connection and underlying socket.
   Future<void> close();
+}
+
+/// A live interactive shell attached to a PTY on the remote host.
+///
+/// Backs the terminal screen: [output] carries decoded stdout+stderr, [write]
+/// feeds keystrokes, [resize] reports terminal geometry changes, and [close]
+/// tears the channel down. The demo build provides a simulated implementation
+/// (see `services/demo_data.dart`) so the terminal renders offline and on web.
+abstract class RemoteShell {
+  /// Decoded (utf8) stdout and stderr, merged in arrival order.
+  Stream<String> get output;
+
+  /// Sends raw input (keystrokes / pasted text) to the shell.
+  void write(String data);
+
+  /// Notifies the remote PTY that the terminal was resized.
+  void resize(int columns, int rows);
+
+  /// Closes the shell channel.
+  void close();
 }

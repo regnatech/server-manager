@@ -129,6 +129,15 @@ class SshSessionImpl implements SshSession {
   }
 
   @override
+  Future<RemoteShell> openShell({int columns = 80, int rows = 24}) async {
+    final SSHClient client = _requireClient();
+    final SSHSession session = await client.shell(
+      pty: SSHPtyConfig(width: columns, height: rows),
+    );
+    return _SshRemoteShell(session);
+  }
+
+  @override
   Future<void> close() async {
     _client?.close();
     _client = null;
@@ -142,5 +151,44 @@ class SshSessionImpl implements SshSession {
       throw SshConnectionException('Session is not connected. Call connect().');
     }
     return c;
+  }
+}
+
+/// [RemoteShell] backed by a dartssh2 PTY [SSHSession].
+class _SshRemoteShell implements RemoteShell {
+  _SshRemoteShell(this._session) {
+    const Utf8Decoder decoder = Utf8Decoder(allowMalformed: true);
+    _outSub = _session.stdout.listen(
+      (Uint8List data) => _controller.add(decoder.convert(data)),
+    );
+    _errSub = _session.stderr.listen(
+      (Uint8List data) => _controller.add(decoder.convert(data)),
+    );
+    // Surface clean closure to listeners.
+    _session.done.whenComplete(_controller.close);
+  }
+
+  final SSHSession _session;
+  final StreamController<String> _controller =
+      StreamController<String>.broadcast();
+  StreamSubscription<Uint8List>? _outSub;
+  StreamSubscription<Uint8List>? _errSub;
+
+  @override
+  Stream<String> get output => _controller.stream;
+
+  @override
+  void write(String data) => _session.write(utf8.encode(data));
+
+  @override
+  void resize(int columns, int rows) =>
+      _session.resizeTerminal(columns, rows);
+
+  @override
+  void close() {
+    _outSub?.cancel();
+    _errSub?.cancel();
+    _session.close();
+    if (!_controller.isClosed) _controller.close();
   }
 }

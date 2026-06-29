@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import '../transport/cli_event.dart';
+import '../transport/ssh_session.dart';
 import 'cli_service.dart';
 
 /// Realistic canned backend data plus a recorded event stream, enabling the
@@ -398,5 +401,158 @@ class DemoCliService implements CliService {
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 300));
     return _replay(DemoData.addApplyEvents('new-site.example.com'));
+  }
+}
+
+/// A fully simulated [RemoteShell] — a believable bash session with NO network.
+///
+/// Echoes keystrokes, parses a handful of commands, and re-emits a colored
+/// prompt. Powers the terminal screen offline and on web, and auto-plays a
+/// short scripted intro so a screenshot taken shortly after launch already
+/// shows a populated session.
+class DemoShell implements RemoteShell {
+  DemoShell() {
+    // Emit the intro on the next microtask so listeners attach first.
+    scheduleMicrotask(_playIntro);
+  }
+
+  static const String _user = 'deploy';
+  static const String _hostShort = 'control-node';
+
+  // ANSI colors (works in xterm): bright green user@host, blue cwd.
+  static const String _reset = '\x1b[0m';
+  static const String _green = '\x1b[1;32m';
+  static const String _blue = '\x1b[1;34m';
+  static const String _dim = '\x1b[2m';
+
+  final StreamController<String> _controller =
+      StreamController<String>.broadcast();
+  final StringBuffer _line = StringBuffer();
+  bool _introDone = false;
+  bool _closed = false;
+
+  String get _prompt =>
+      '$_green$_user@$_hostShort$_reset:$_blue~$_reset\$ ';
+
+  @override
+  Stream<String> get output => _controller.stream;
+
+  void _emit(String s) {
+    if (!_closed) _controller.add(s);
+  }
+
+  /// Auto-plays a couple of already-"run" commands then a fresh prompt, so the
+  /// terminal looks alive immediately for screenshots.
+  Future<void> _playIntro() async {
+    _emit('${_dim}Server Manager — interactive shell (demo)$_reset\r\n');
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+
+    _emit(_prompt);
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    _emit('whoami\r\n');
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    _emit('${_respond('whoami')}\r\n');
+
+    _emit(_prompt);
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    _emit('server list\r\n');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    _emit('${_respond('server list')}\r\n');
+
+    _emit(_prompt);
+    _introDone = true;
+  }
+
+  @override
+  void write(String data) {
+    // Until the scripted intro finishes, swallow input so it doesn't interleave.
+    if (!_introDone) return;
+    for (final int code in data.runes) {
+      switch (code) {
+        case 0x0d: // Enter (\r)
+        case 0x0a: // Newline (\n)
+          _emit('\r\n');
+          _runLine(_line.toString());
+          _line.clear();
+          _emit(_prompt);
+        case 0x7f: // Backspace (DEL)
+        case 0x08: // Backspace (BS)
+          final String current = _line.toString();
+          if (current.isNotEmpty) {
+            _line
+              ..clear()
+              ..write(current.substring(0, current.length - 1));
+            // Erase one char on screen.
+            _emit('\b \b');
+          }
+        default:
+          final String ch = String.fromCharCode(code);
+          _line.write(ch);
+          _emit(ch); // local echo
+      }
+    }
+  }
+
+  void _runLine(String raw) {
+    final String line = raw.trim();
+    if (line.isEmpty) return;
+    final String out = _respond(line);
+    if (out.isNotEmpty) _emit('$out\r\n');
+  }
+
+  /// Returns the (multi-line, \r\n-joined) response body for [line].
+  String _respond(String line) {
+    final List<String> parts = line.split(RegExp(r'\s+'));
+    final String cmd = parts.first;
+    final List<String> args = parts.skip(1).toList();
+
+    switch (cmd) {
+      case 'ls':
+        return 'sites.index  servers  config';
+      case 'whoami':
+        return _user;
+      case 'pwd':
+        return '/home/$_user';
+      case 'uname':
+        return 'Linux $_hostShort 6.8.0-45-generic #45-Ubuntu SMP '
+            'x86_64 GNU/Linux';
+      case 'echo':
+        return args.join(' ');
+      case 'server':
+        if (args.isNotEmpty && args.first == 'list') {
+          return _serverListTable();
+        }
+        return 'usage: server <list|update|rollback> ...';
+      case 'clear':
+        // Clear screen + home cursor.
+        return '\x1b[2J\x1b[H';
+      default:
+        return 'bash: $cmd: command not found';
+    }
+  }
+
+  /// A compact table of the demo sites, reusing [DemoData].
+  String _serverListTable() {
+    final StringBuffer b = StringBuffer();
+    b.write('${_dim}DOMAIN                 SERVER   FRAMEWORK   HEALTH$_reset');
+    for (final Map<String, dynamic> s in DemoData.sites) {
+      final String domain = (s['domain'] as String).padRight(22);
+      final String server = (s['server'] as String).padRight(8);
+      final String fw = (s['framework'] as String).padRight(11);
+      final String health = s['health'] as String;
+      b.write('\r\n$domain $server $fw $health');
+    }
+    return b.toString();
+  }
+
+  @override
+  void resize(int columns, int rows) {
+    // No-op: the simulated shell ignores geometry.
+  }
+
+  @override
+  void close() {
+    _closed = true;
+    if (!_controller.isClosed) _controller.close();
   }
 }

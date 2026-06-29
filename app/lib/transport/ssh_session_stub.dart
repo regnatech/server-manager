@@ -37,5 +37,9 @@ class SshSessionImpl implements SshSession {
       _unsupported();
 
   @override
+  Future<RemoteShell> openShell({int columns = 80, int rows = 24}) async =>
+      throw UnsupportedError('Terminal requires the desktop app');
+
+  @override
   Future<void> close() async {}
 }

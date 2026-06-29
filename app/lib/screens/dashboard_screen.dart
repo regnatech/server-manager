@@ -38,6 +38,11 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ),
           IconButton(
+            tooltip: 'Terminal',
+            icon: const Icon(Icons.terminal),
+            onPressed: () => context.go('/terminal'),
+          ),
+          IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
             onPressed: () => ref.invalidate(sitesProvider),

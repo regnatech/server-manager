@@ -23,6 +23,10 @@ dependencies:
   # Navigation
   go_router: ^14.2.0
 
+  # Interactive terminal (xterm widget + emulator). Works on web and desktop;
+  # the live SSH shell behind it is desktop-only (demo shell covers web).
+  xterm: ^4.0.0
+
   # Animation & motion
   flutter_animate: ^4.5.0
   animations: ^2.0.11

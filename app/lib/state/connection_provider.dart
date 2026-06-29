@@ -178,3 +178,19 @@ final cliServiceProvider = Provider<CliService>((ref) {
   }
   return cli;
 });
+
+/// Resolves a [RemoteShell] for the terminal screen.
+///
+/// Returns a simulated [DemoShell] when in demo mode or when there is no live
+/// SSH session (also covers the web build); otherwise opens an interactive PTY
+/// shell on the live session. The returned shell is closed by the screen on
+/// dispose. Kept alive so a brief screen rebuild doesn't reopen the channel.
+final terminalShellProvider = FutureProvider<RemoteShell>((ref) async {
+  final bool demo = ref.watch(demoModeProvider);
+  final SshSession? session = ref.watch(connectionProvider).session;
+
+  if (demo || session == null || !session.isConnected) {
+    return DemoShell();
+  }
+  return session.openShell();
+});

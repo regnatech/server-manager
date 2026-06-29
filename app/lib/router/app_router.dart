@@ -7,6 +7,7 @@ import '../screens/add_wizard_screen.dart';
 import '../screens/connect_screen.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/site_detail_screen.dart';
+import '../screens/terminal_screen.dart';
 import '../state/connection_provider.dart';
 import '../theme/app_theme.dart';
 
@@ -72,6 +73,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/add',
         pageBuilder: (BuildContext context, GoRouterState state) =>
             _fadeThrough(const AddWizardScreen(), state),
+      ),
+      GoRoute(
+        path: '/terminal',
+        pageBuilder: (BuildContext context, GoRouterState state) =>
+            _fadeThrough(const TerminalScreen(), state),
       ),
     ],
   );
