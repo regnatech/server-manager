@@ -75,7 +75,14 @@ cmd_add() {
     fw="$(_choose_framework)"
   fi
 
+  # Application root. For front-controller PHP frameworks the web root is the
+  # project's public/ dir, so the app root (git, composer, artisan, .env) is its
+  # parent — never the public dir itself (the .env must NOT be web-served).
   local app_root="${DISC_APP_ROOT:-$root}"
+  if { _is_laravel_like "$fw" || [[ "$fw" == "symfony" ]]; } && [[ "$root" == */public ]]; then
+    app_root="${root%/public}"
+  fi
+  is_php_framework "$fw" && info "Application root: ${C_BOLD}${app_root}${C_RESET}"
 
   # Git
   local git_remote="$DISC_GIT_REMOTE" git_branch="$DISC_GIT_BRANCH"
@@ -90,15 +97,25 @@ cmd_add() {
     [[ -n "$git_remote" ]] && git_branch="$(ask "Branch" "main")"
   fi
 
-  # PHP
+  # PHP — confirm the version, then make sure PHP-FPM for it is actually
+  # installed (provisioning it if needed) and resolve its socket.
   local php_version="" php_socket=""
   if is_php_framework "$fw"; then
-    php_version="$(present "PHP version" "${DISC_PHP_VERSION}")"
-    if [[ -n "$DISC_PHP_SOCKET" ]]; then
-      php_socket="$(present "PHP-FPM socket" "$DISC_PHP_SOCKET")"
-    else
-      warn "Could not find a php-fpm socket automatically."
+    php_version="$(present "PHP version" "${DISC_PHP_VERSION:-8.3}")"
+    php_socket="$DISC_PHP_SOCKET"
+    [[ -z "$php_socket" ]] && php_socket="$(php_socket_for "$php_version")"
+    if [[ -z "$php_socket" ]]; then
+      warn "PHP-FPM ${php_version} does not appear to be installed on ${server}."
+      if confirm "Install PHP ${php_version} (FPM + common Laravel extensions + Composer) now?" "Y"; then
+        step "Installing PHP ${php_version}" php_install "$php_version" \
+          || die "PHP installation failed."
+        php_socket="$(php_socket_for "$php_version")"
+      fi
+    fi
+    if [[ -z "$php_socket" ]]; then
       php_socket="$(ask_required "PHP-FPM socket path" "/run/php/php${php_version}-fpm.sock")"
+    else
+      ok "PHP-FPM socket: ${php_socket}"
     fi
   fi
 

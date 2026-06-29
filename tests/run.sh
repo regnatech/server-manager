@@ -24,6 +24,7 @@ source "$ROOT/lib/discovery/php.sh"
 source "$ROOT/lib/discovery/discover.sh"
 source "$ROOT/lib/providers/nginx.sh"
 source "$ROOT/lib/providers/database.sh"
+source "$ROOT/lib/providers/php.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -195,6 +196,9 @@ CUR=history;    history_record d ts a b /bk ok 1.0 >/dev/null 2>&1 || true
 CUR=dbinstall;  db_install >/dev/null 2>&1 || true
 CUR=dbcreate;   db_create n u p >/dev/null 2>&1 || true
 CUR=dbenv;      db_set_env_creds /a n u p >/dev/null 2>&1 || true
+CUR=dbwriteenv; printf 'X=1\n' | db_write_env /a >/dev/null 2>&1 || true
+CUR=phpinstall; php_install 8.3 >/dev/null 2>&1 || true
+CUR=phpsocket;  php_socket_for 8.3 >/dev/null 2>&1 || true
 CUR=sitewrite;  printf 'domain=d\nframework=laravel\n' | remote_site_write d >/dev/null 2>&1 || true
 CUR=nginx;      nginx_render d /r laravel /s '' | nginx_install d >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi

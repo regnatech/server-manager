@@ -77,12 +77,14 @@ EOF
 # db_env_exists <app_root>
 db_env_exists() { ssh_exec "test -f $(shq "$1/.env")"; }
 
-# db_write_env <app_root> < content — create the .env from pasted content.
+# db_write_env <app_root> < content — create the .env from pasted content,
+# creating the application directory if it doesn't exist yet.
 db_write_env() {
   local app_root="$1"
   local body; body="$(cat)"
   ssh_script <<EOF
 set -e
+mkdir -p $(shq "$app_root")
 cat > $(shq "$app_root/.env") <<'SRVMGR_ENV_EOF'
 ${body}
 SRVMGR_ENV_EOF
