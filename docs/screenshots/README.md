@@ -53,6 +53,17 @@ health gauges stack to one column.
 On phones the top-level destinations move to a **bottom navigation bar**
 (Sites · Health · Audit · Terminal · Settings); desktop keeps its app-bar icons.
 
+### Guided setup (3-step wizard)
+
+Onboarding is a step-by-step wizard — **Server → Identity → Confirm** — with an
+animated progress bar and Back/Next, so the mobile setup stays roomy and
+one-thing-at-a-time instead of a single cramped form. Step 1 also offers the
+**Demo** escape hatch; the final step reviews the connection before testing it.
+
+| 1 · Server | 2 · Identity | 3 · Confirm |
+|---|---|---|
+| ![step1](21-connect-step1.png) | ![step2](22-connect-step2.png) | ![step3](23-connect-step3.png) |
+
 | Dashboard + bottom nav | Git / Push & Deploy | Health (monitoring) | Merge conflicts (tabbed) |
 |---|---|---|---|
 | ![phone-dashboard](20-phone-dashboard.png) | ![phone-git](17-phone-git.png) | ![phone-health](18-phone-health.png) | ![phone-merge](19-phone-merge.png) |

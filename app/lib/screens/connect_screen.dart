@@ -10,11 +10,13 @@ import 'package:go_router/go_router.dart';
 import '../models/connection_profile.dart';
 import '../state/connection_provider.dart';
 import '../theme/app_theme.dart';
+import '../transport/platform.dart';
 import '../widgets/app_button.dart';
 import '../widgets/section_header.dart';
 
-/// Guided onboarding: collect SSH details, test the connection (animated
-/// success check), or jump straight into demo mode.
+/// Guided onboarding as a 3-step wizard (Server → Identity → Confirm), so the
+/// flow stays roomy and one-thing-at-a-time on a phone. Ends by testing the
+/// connection (animated success check) or jumping straight into demo mode.
 class ConnectScreen extends ConsumerStatefulWidget {
   const ConnectScreen({super.key});
 
@@ -29,6 +31,11 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
   final TextEditingController _password = TextEditingController();
   final TextEditingController _passphrase = TextEditingController();
 
+  static const List<String> _stepTitles = <String>['Server', 'Identity', 'Confirm'];
+
+  int _step = 0;
+  bool _forward = true;
+
   AuthMethod _auth = AuthMethod.key;
   String? _keyPath;
   String? _keyPem;
@@ -36,6 +43,21 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
   bool _connecting = false;
   bool _succeeded = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Screenshot hook only: SM_CONNECT_STEP pre-fills demo input and jumps to a
+    // wizard step so each step can be captured. No effect in normal use.
+    final String? step = envVar('SM_CONNECT_STEP');
+    if (step != null && step.isNotEmpty) {
+      _host.text = 'control.example.com';
+      _user.text = 'deploy';
+      _auth = AuthMethod.password;
+      _password.text = 'correct-horse-battery';
+      _step = (int.tryParse(step) ?? 0).clamp(0, _stepTitles.length - 1);
+    }
+  }
 
   @override
   void dispose() {
@@ -58,6 +80,40 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
     setState(() {
       _keyPath = file.path;
       _keyPem = contents;
+    });
+  }
+
+  /// Whether the current step has the minimum input needed to advance.
+  bool get _canAdvance {
+    switch (_step) {
+      case 0:
+        return _host.text.trim().isNotEmpty;
+      case 1:
+        final bool hasUser = _user.text.trim().isNotEmpty;
+        final bool hasCred = _auth == AuthMethod.key
+            ? _keyPem != null
+            : _password.text.isNotEmpty;
+        return hasUser && hasCred;
+      default:
+        return true;
+    }
+  }
+
+  void _next() {
+    if (!_canAdvance) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _forward = true;
+      _step = (_step + 1).clamp(0, _stepTitles.length - 1);
+    });
+  }
+
+  void _back() {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _forward = false;
+      _error = null;
+      _step = (_step - 1).clamp(0, _stepTitles.length - 1);
     });
   }
 
@@ -136,93 +192,39 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        const SectionHeader(
-                          title: 'Connect',
-                          subtitle: 'SSH into your server-manager control node',
-                        ),
-                        const SizedBox(height: Insets.md),
-                        TextField(
-                          controller: _host,
-                          decoration: const InputDecoration(
-                            labelText: 'Host',
-                            hintText: 'control.example.com',
-                            prefixIcon: Icon(Icons.dns_outlined),
-                          ),
-                        ),
-                        const SizedBox(height: Insets.md),
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              flex: 2,
-                              child: TextField(
-                                controller: _user,
-                                decoration: const InputDecoration(
-                                  labelText: 'User',
-                                  prefixIcon: Icon(Icons.person_outline),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: Insets.md),
-                            Expanded(
-                              child: TextField(
-                                controller: _port,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: <TextInputFormatter>[
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                decoration: const InputDecoration(
-                                  labelText: 'Port',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                        _StepIndicator(current: _step, titles: _stepTitles),
                         const SizedBox(height: Insets.lg),
-                        _AuthToggle(
-                          value: _auth,
-                          onChanged: (AuthMethod m) =>
-                              setState(() => _auth = m),
-                        ),
-                        const SizedBox(height: Insets.md),
-                        AnimatedSwitcher(
+                        // Smoothly grow/shrink the card as steps differ in
+                        // height, and slide step content in/out horizontally.
+                        AnimatedSize(
                           duration: AppMotion.base,
-                          child: _auth == AuthMethod.key
-                              ? _keyFields()
-                              : _passwordField(),
-                        ),
-                        const SizedBox(height: Insets.md),
-                        CheckboxListTile(
-                          value: _remember,
-                          onChanged: (bool? v) =>
-                              setState(() => _remember = v ?? false),
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          controlAffinity: ListTileControlAffinity.leading,
-                          title: const Text('Remember this connection'),
-                          subtitle: const Text(
-                            'Stores the profile and secret in the OS vault',
+                          curve: AppMotion.emphasized,
+                          alignment: Alignment.topCenter,
+                          child: AnimatedSwitcher(
+                            duration: AppMotion.base,
+                            switchInCurve: AppMotion.emphasized,
+                            transitionBuilder:
+                                (Widget child, Animation<double> anim) {
+                              final Animation<Offset> slide = Tween<Offset>(
+                                begin: Offset(_forward ? 0.12 : -0.12, 0),
+                                end: Offset.zero,
+                              ).animate(anim);
+                              return FadeTransition(
+                                opacity: anim,
+                                child: SlideTransition(
+                                  position: slide,
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: KeyedSubtree(
+                              key: ValueKey<int>(_step),
+                              child: _stepContent(theme),
+                            ),
                           ),
                         ),
-                        if (_error != null) ...<Widget>[
-                          const SizedBox(height: Insets.sm),
-                          _ErrorBox(message: _error!),
-                        ],
                         const SizedBox(height: Insets.lg),
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: _connectButton(),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: Insets.md),
-                        const _OrDivider(),
-                        const SizedBox(height: Insets.md),
-                        OutlinedButton.icon(
-                          onPressed: _exploreDemo,
-                          icon: const Icon(Icons.play_circle_outline),
-                          label: const Text('Explore demo (no server needed)'),
-                        ),
+                        _navRow(),
                       ],
                     ),
                   ),
@@ -232,6 +234,186 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _stepContent(ThemeData theme) {
+    switch (_step) {
+      case 0:
+        return _stepServer();
+      case 1:
+        return _stepIdentity();
+      default:
+        return _stepConfirm(theme);
+    }
+  }
+
+  // ---- Step 0: Server ------------------------------------------------------
+
+  Widget _stepServer() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        const SectionHeader(
+          title: 'Server',
+          subtitle: 'Where your server-manager control node lives',
+        ),
+        const SizedBox(height: Insets.md),
+        TextField(
+          controller: _host,
+          autofocus: true,
+          onChanged: (_) => setState(() {}),
+          textInputAction: TextInputAction.next,
+          decoration: const InputDecoration(
+            labelText: 'Host',
+            hintText: 'control.example.com',
+            prefixIcon: Icon(Icons.dns_outlined),
+          ),
+        ),
+        const SizedBox(height: Insets.md),
+        TextField(
+          controller: _port,
+          keyboardType: TextInputType.number,
+          inputFormatters: <TextInputFormatter>[
+            FilteringTextInputFormatter.digitsOnly,
+          ],
+          decoration: const InputDecoration(
+            labelText: 'Port',
+            hintText: '22',
+            prefixIcon: Icon(Icons.settings_ethernet),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---- Step 1: Identity ----------------------------------------------------
+
+  Widget _stepIdentity() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        const SectionHeader(
+          title: 'Identity',
+          subtitle: 'How to authenticate over SSH',
+        ),
+        const SizedBox(height: Insets.md),
+        TextField(
+          controller: _user,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(
+            labelText: 'User',
+            prefixIcon: Icon(Icons.person_outline),
+          ),
+        ),
+        const SizedBox(height: Insets.lg),
+        _AuthToggle(
+          value: _auth,
+          onChanged: (AuthMethod m) => setState(() => _auth = m),
+        ),
+        const SizedBox(height: Insets.md),
+        AnimatedSwitcher(
+          duration: AppMotion.base,
+          child: _auth == AuthMethod.key ? _keyFields() : _passwordField(),
+        ),
+      ],
+    );
+  }
+
+  // ---- Step 2: Confirm -----------------------------------------------------
+
+  Widget _stepConfirm(ThemeData theme) {
+    final String portText = _port.text.trim().isEmpty ? '22' : _port.text.trim();
+    final String auth =
+        _auth == AuthMethod.key ? 'Private key' : 'Password';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        const SectionHeader(
+          title: 'Confirm',
+          subtitle: 'Review and test the connection',
+        ),
+        const SizedBox(height: Insets.md),
+        _SummaryTile(
+          icon: Icons.dns_outlined,
+          label: 'Host',
+          value: '${_host.text.trim()}:$portText',
+        ),
+        _SummaryTile(
+          icon: Icons.person_outline,
+          label: 'User',
+          value: _user.text.trim(),
+        ),
+        _SummaryTile(
+          icon: _auth == AuthMethod.key
+              ? Icons.vpn_key_outlined
+              : Icons.lock_outline,
+          label: 'Auth',
+          value: _auth == AuthMethod.key
+              ? (_keyPath?.split('/').last ?? auth)
+              : auth,
+        ),
+        const SizedBox(height: Insets.sm),
+        CheckboxListTile(
+          value: _remember,
+          onChanged: (bool? v) => setState(() => _remember = v ?? false),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: const Text('Remember this connection'),
+          subtitle: const Text('Stores the profile and secret in the OS vault'),
+        ),
+        if (_error != null) ...<Widget>[
+          const SizedBox(height: Insets.sm),
+          _ErrorBox(message: _error!),
+        ],
+      ],
+    );
+  }
+
+  // ---- Navigation ----------------------------------------------------------
+
+  Widget _navRow() {
+    // Last step: Back + the connect/success control.
+    if (_step == _stepTitles.length - 1) {
+      return Row(
+        children: <Widget>[
+          _backButton(),
+          const SizedBox(width: Insets.md),
+          Expanded(child: _connectButton()),
+        ],
+      );
+    }
+    // Step 0 offers the demo escape hatch; later steps offer Back.
+    return Row(
+      children: <Widget>[
+        if (_step == 0)
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _exploreDemo,
+              icon: const Icon(Icons.play_circle_outline),
+              label: const Text('Demo'),
+            ),
+          )
+        else
+          _backButton(),
+        const SizedBox(width: Insets.md),
+        Expanded(
+          child: AppButton(
+            label: 'Next',
+            icon: Icons.arrow_forward,
+            onPressed: _canAdvance ? _next : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _backButton() {
+    return OutlinedButton.icon(
+      onPressed: _connecting ? null : _back,
+      icon: const Icon(Icons.arrow_back),
+      label: const Text('Back'),
     );
   }
 
@@ -268,6 +450,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       key: const ValueKey<String>('pw'),
       controller: _password,
       obscureText: true,
+      onChanged: (_) => setState(() {}),
       decoration: const InputDecoration(
         labelText: 'Password',
         prefixIcon: Icon(Icons.lock_outline),
@@ -311,6 +494,107 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// A compact step progress header: a row of segment bars (filled up to the
+/// current step) with the active step's name and "Step n of m".
+class _StepIndicator extends StatelessWidget {
+  const _StepIndicator({required this.current, required this.titles});
+  final int current;
+  final List<String> titles;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            for (int i = 0; i < titles.length; i++) ...<Widget>[
+              Expanded(
+                child: AnimatedContainer(
+                  duration: AppMotion.base,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(3),
+                    gradient: i <= current ? Palette.brandGradient : null,
+                    color: i <= current
+                        ? null
+                        : theme.colorScheme.surfaceContainerHighest,
+                  ),
+                ),
+              ),
+              if (i != titles.length - 1) const SizedBox(width: Insets.xs),
+            ],
+          ],
+        ),
+        const SizedBox(height: Insets.sm),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: <Widget>[
+            Text(
+              titles[current],
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            Text(
+              'Step ${current + 1} of ${titles.length}',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// A read-only row used on the confirm step: icon · label · value.
+class _SummaryTile extends StatelessWidget {
+  const _SummaryTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Insets.xs),
+      child: Row(
+        children: <Widget>[
+          Icon(icon, size: 18, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: Insets.sm),
+          SizedBox(
+            width: 56,
+            child: Text(
+              label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value.isEmpty ? '—' : value,
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -377,31 +661,6 @@ class _AuthToggle extends StatelessWidget {
       ],
       selected: <AuthMethod>{value},
       onSelectionChanged: (Set<AuthMethod> s) => onChanged(s.first),
-    );
-  }
-}
-
-class _OrDivider extends StatelessWidget {
-  const _OrDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    final Color c = Theme.of(context).colorScheme.outline;
-    return Row(
-      children: <Widget>[
-        Expanded(child: Divider(color: c)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: Insets.md),
-          child: Text(
-            'or',
-            style: Theme.of(context)
-                .textTheme
-                .labelMedium
-                ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-          ),
-        ),
-        Expanded(child: Divider(color: c)),
-      ],
     );
   }
 }
