@@ -311,6 +311,77 @@ class DemoData {
         },
       ];
 
+  /// The server-scoped audit findings (no site-specific items). Powers the
+  /// server-level audit reached from the dashboard. Like [auditFindings], the
+  /// demo stream omits any id already in the fixed set so the list shrinks
+  /// after a fix.
+  static List<Map<String, dynamic>> serverAuditFindings() =>
+      <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'ssh_root_login',
+          'severity': 'high',
+          'title': 'SSH permits root login',
+          'detail': "PermitRootLogin is 'yes'.",
+          'recommendation': 'Set PermitRootLogin to no and use a sudo user.',
+          'fixable': true,
+          'fix_label': 'Disable root SSH login',
+        },
+        <String, dynamic>{
+          'id': 'firewall',
+          'severity': 'high',
+          'title': 'No active firewall',
+          'detail': 'ufw is inactive.',
+          'recommendation': 'Enable ufw (allow 22/80/443 only).',
+          'fixable': true,
+          'fix_label': 'Enable the firewall',
+        },
+        <String, dynamic>{
+          'id': 'fail2ban',
+          'severity': 'medium',
+          'title': 'fail2ban is not running',
+          'detail': 'Brute-force attempts are not throttled.',
+          'recommendation': 'Install and enable fail2ban.',
+          'fixable': true,
+          'fix_label': 'Install fail2ban',
+        },
+        <String, dynamic>{
+          'id': 'auto_updates',
+          'severity': 'medium',
+          'title': 'Unattended security updates are off',
+          'detail': 'unattended-upgrades is not configured.',
+          'recommendation': 'Enable automatic security updates.',
+          'fixable': true,
+          'fix_label': 'Enable auto-updates',
+        },
+        <String, dynamic>{
+          'id': 'nginx_server_tokens',
+          'severity': 'low',
+          'title': 'nginx leaks its version',
+          'detail': 'server_tokens is on; responses expose the nginx version.',
+          'recommendation': 'Set server_tokens off in nginx.conf.',
+          'fixable': true,
+          'fix_label': 'Hide nginx version',
+        },
+        <String, dynamic>{
+          'id': 'php_expose',
+          'severity': 'low',
+          'title': 'PHP advertises itself via X-Powered-By',
+          'detail': 'expose_php is On.',
+          'recommendation': 'Set expose_php = Off in php.ini.',
+          'fixable': true,
+          'fix_label': 'Hide PHP version',
+        },
+        <String, dynamic>{
+          'id': 'open_ports',
+          'severity': 'low',
+          'title': 'Unexpected listening ports',
+          'detail': 'Ports 6379 (redis) and 3306 (mysql) are listening.',
+          'recommendation': 'Bind internal services to 127.0.0.1.',
+          'fixable': false,
+          'fix_label': '',
+        },
+      ];
+
   /// Human-readable progress label for a demo `audit fix <id>` run.
   static String auditFixLabel(String id) {
     switch (id) {
@@ -324,6 +395,12 @@ class DemoData {
         return 'Installing fail2ban';
       case 'https':
         return 'Issuing a TLS certificate';
+      case 'auto_updates':
+        return 'Enabling unattended security updates';
+      case 'nginx_server_tokens':
+        return 'Disabling nginx server_tokens';
+      case 'php_expose':
+        return 'Disabling expose_php';
       default:
         return 'Applying remediation';
     }
@@ -471,24 +548,40 @@ class DemoCliService implements CliService {
   }
 
   @override
-  Stream<CliEvent> audit(String domain) async* {
-    yield BannerEvent(label: 'Auditing $domain');
+  Stream<CliEvent> audit([String? domain]) async* {
+    final bool server = domain == null || domain.isEmpty;
+    yield BannerEvent(
+      label: server ? 'Auditing server' : 'Auditing $domain',
+    );
     yield const SectionEvent(label: 'Security audit');
-    const List<(String, String)> checks = <(String, String)>[
-      ('c1', 'Checking SSH configuration'),
-      ('c2', 'Checking the firewall'),
-      ('c3', 'Checking fail2ban'),
-      ('c4', 'Checking automatic updates'),
-      ('c5', 'Checking .env permissions'),
-      ('c6', 'Checking HTTPS'),
-    ];
+    final List<(String, String)> checks = server
+        ? const <(String, String)>[
+            ('c1', 'Checking SSH configuration'),
+            ('c2', 'Checking the firewall'),
+            ('c3', 'Checking fail2ban'),
+            ('c4', 'Checking automatic updates'),
+            ('c5', 'Checking nginx hardening'),
+            ('c6', 'Checking PHP configuration'),
+            ('c7', 'Checking listening ports'),
+          ]
+        : const <(String, String)>[
+            ('c1', 'Checking SSH configuration'),
+            ('c2', 'Checking the firewall'),
+            ('c3', 'Checking fail2ban'),
+            ('c4', 'Checking automatic updates'),
+            ('c5', 'Checking .env permissions'),
+            ('c6', 'Checking HTTPS'),
+          ];
     for (final (String, String) c in checks) {
       yield StepStart(id: c.$1, label: c.$2);
       await Future<void>.delayed(const Duration(milliseconds: 380));
       yield StepEnd(id: c.$1, ok: true, dur: 0.4);
       await Future<void>.delayed(const Duration(milliseconds: 140));
     }
-    final List<Map<String, dynamic>> items = DemoData.auditFindings(domain)
+    final List<Map<String, dynamic>> source = server
+        ? DemoData.serverAuditFindings()
+        : DemoData.auditFindings(domain);
+    final List<Map<String, dynamic>> items = source
         .where((Map<String, dynamic> f) =>
             !_fixedAuditIds.contains(f['id'] as String))
         .toList();
@@ -498,8 +591,11 @@ class DemoCliService implements CliService {
   }
 
   @override
-  Stream<CliEvent> auditFix(String id, String domain) async* {
-    yield BannerEvent(label: 'Fixing $id on $domain');
+  Stream<CliEvent> auditFix(String id, [String? domain]) async* {
+    final String scope = (domain == null || domain.isEmpty)
+        ? 'the server'
+        : domain;
+    yield BannerEvent(label: 'Fixing $id on $scope');
     final String label = DemoData.auditFixLabel(id);
     yield StepStart(id: 'fix-$id', label: label);
     await Future<void>.delayed(const Duration(milliseconds: 700));

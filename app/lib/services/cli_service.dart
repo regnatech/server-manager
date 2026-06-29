@@ -35,11 +35,16 @@ abstract class CliService {
   /// `server --json ssl status <domain>` → certificate info.
   Stream<CliEvent> sslStatus(String domain);
 
-  /// `server --json audit <domain>` → step events then an audit [DataEvent].
-  Stream<CliEvent> audit(String domain);
+  /// `server --json audit [<domain>]` → step events then an audit [DataEvent].
+  ///
+  /// With a non-empty [domain] the audit is scoped to that site; omitted (or
+  /// null/empty) it runs a server-level audit (`server --json audit`).
+  Stream<CliEvent> audit([String? domain]);
 
-  /// `server --json audit fix <id> <domain>` → step events then a [DoneEvent].
-  Stream<CliEvent> auditFix(String id, String domain);
+  /// `server --json audit fix <id> [<domain>]` → step events then a [DoneEvent].
+  ///
+  /// [domain] scopes the fix to a site; omit it for a server-level fix.
+  Stream<CliEvent> auditFix(String id, [String? domain]);
 
   /// `server --json add --plan` → emits a plan [DataEvent].
   Stream<CliEvent> addPlan();
@@ -113,12 +118,18 @@ class LiveCliService implements CliService {
       _stream(<String>['ssl', 'status', domain]);
 
   @override
-  Stream<CliEvent> audit(String domain) =>
-      _stream(<String>['audit', domain]);
+  Stream<CliEvent> audit([String? domain]) => _stream(<String>[
+        'audit',
+        if (domain != null && domain.isNotEmpty) domain,
+      ]);
 
   @override
-  Stream<CliEvent> auditFix(String id, String domain) =>
-      _stream(<String>['audit', 'fix', id, domain]);
+  Stream<CliEvent> auditFix(String id, [String? domain]) => _stream(<String>[
+        'audit',
+        'fix',
+        id,
+        if (domain != null && domain.isNotEmpty) domain,
+      ]);
 
   @override
   Stream<CliEvent> addPlan() => _stream(<String>['add', '--plan']);

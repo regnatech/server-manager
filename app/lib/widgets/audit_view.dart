@@ -1,0 +1,548 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../models/audit_finding.dart';
+import '../theme/app_theme.dart';
+import '../transport/cli_event.dart';
+import 'app_button.dart';
+import 'glass_card.dart';
+import 'section_header.dart';
+
+/// Per-finding fix lifecycle on the audit view.
+enum _FixState { idle, running, fixed, failed }
+
+/// A reusable security-audit presentation: runs an audit stream, shows live
+/// check progress, then lists findings (sorted by severity) as [GlassCard]s
+/// with a posture header, per-severity count chips, a "Re-run audit" button,
+/// and a per-finding "Fix" button that streams remediation progress and
+/// re-runs the audit on success so the finding disappears.
+///
+/// The data path is injected so the same widget serves both the per-site audit
+/// (`cli.audit(domain)` / `cli.auditFix(id, domain)`) and the server-level
+/// audit (`cli.audit()` / `cli.auditFix(id)`).
+class AuditView extends ConsumerStatefulWidget {
+  const AuditView({
+    super.key,
+    required this.runAudit,
+    required this.runFix,
+    this.autoRun = false,
+  });
+
+  /// Starts a fresh audit run.
+  final Stream<CliEvent> Function() runAudit;
+
+  /// Starts a remediation for the finding [id].
+  final Stream<CliEvent> Function(String id) runFix;
+
+  /// When true, the audit runs once automatically on first build (used by demo
+  /// deep-links and the server audit screen).
+  final bool autoRun;
+
+  @override
+  ConsumerState<AuditView> createState() => _AuditViewState();
+}
+
+class _AuditViewState extends ConsumerState<AuditView> {
+  bool _running = false;
+  bool _hasRun = false;
+  String _statusLabel = '';
+  List<AuditFinding>? _findings;
+
+  /// Per-finding-id fix state and last step status line.
+  final Map<String, _FixState> _fixState = <String, _FixState>{};
+  final Map<String, String> _fixStatus = <String, String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoRun) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _runAudit());
+    }
+  }
+
+  Future<void> _runAudit() async {
+    if (_running) return;
+    setState(() {
+      _running = true;
+      _hasRun = true;
+      _statusLabel = 'Starting audit…';
+    });
+    List<AuditFinding>? result;
+    try {
+      await for (final CliEvent e in widget.runAudit()) {
+        if (!mounted) return;
+        switch (e) {
+          case SectionEvent(label: final String l):
+            setState(() => _statusLabel = l);
+          case StepStart(label: final String l):
+            setState(() => _statusLabel = l);
+          case DataEvent(kind: 'audit', items: final List<dynamic>? items):
+            result = <AuditFinding>[
+              for (final dynamic item in items ?? const <dynamic>[])
+                if (item is Map<String, dynamic>) AuditFinding.fromJson(item),
+            ]..sort((AuditFinding a, AuditFinding b) =>
+                a.severityRank.compareTo(b.severityRank));
+          case DoneEvent():
+            break;
+          default:
+            break;
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _findings = result ?? _findings ?? const <AuditFinding>[];
+          _fixState.clear();
+          _fixStatus.clear();
+        });
+      }
+    }
+  }
+
+  Future<void> _runFix(AuditFinding finding) async {
+    final String id = finding.id;
+    if (_fixState[id] == _FixState.running) return;
+    setState(() {
+      _fixState[id] = _FixState.running;
+      _fixStatus[id] = 'Applying…';
+    });
+    bool ok = false;
+    try {
+      await for (final CliEvent e in widget.runFix(id)) {
+        if (!mounted) return;
+        switch (e) {
+          case StepStart(label: final String l):
+            setState(() => _fixStatus[id] = l);
+          case DoneEvent(ok: final bool done):
+            ok = done;
+          default:
+            break;
+        }
+      }
+    } catch (_) {
+      ok = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      _fixState[id] = ok ? _FixState.fixed : _FixState.failed;
+      _fixStatus[id] = ok ? 'Fixed' : 'Fix failed';
+    });
+    // On success, re-run the audit shortly so the finding disappears.
+    if (ok) {
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      if (mounted) await _runAudit();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<AuditFinding>? findings = _findings;
+    final bool showProgress =
+        (_running || !_hasRun) && (findings == null || findings.isEmpty);
+
+    return Padding(
+      padding: const EdgeInsets.all(Insets.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _AuditHeader(
+            findings: findings,
+            running: _running,
+            onRerun: _running ? null : _runAudit,
+          ),
+          const SizedBox(height: Insets.md),
+          Expanded(
+            child: showProgress
+                ? _AuditProgress(label: _statusLabel)
+                : (findings == null || findings.isEmpty)
+                    ? const _AuditClean()
+                    : ListView.separated(
+                        itemCount: findings.length,
+                        separatorBuilder: (_, __) =>
+                            const SizedBox(height: Insets.sm),
+                        itemBuilder: (BuildContext context, int i) {
+                          final AuditFinding f = findings[i];
+                          return _FindingCard(
+                            finding: f,
+                            state: _fixState[f.id] ?? _FixState.idle,
+                            statusLine: _fixStatus[f.id],
+                            onFix: () => _runFix(f),
+                          )
+                              .animate(delay: Duration(milliseconds: 50 * i))
+                              .fadeIn(duration: AppMotion.base)
+                              .slideY(
+                                begin: 0.12,
+                                curve: AppMotion.emphasized,
+                              );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Maps a severity string to its semantic color.
+Color _severityColor(String severity) {
+  switch (severity) {
+    case 'critical':
+    case 'high':
+      return Palette.err;
+    case 'medium':
+      return Palette.warn;
+    case 'low':
+    case 'info':
+    default:
+      return Palette.info;
+  }
+}
+
+/// Header with a posture line, per-severity count chips, and a re-run button.
+class _AuditHeader extends StatelessWidget {
+  const _AuditHeader({
+    required this.findings,
+    required this.running,
+    required this.onRerun,
+  });
+
+  final List<AuditFinding>? findings;
+  final bool running;
+  final VoidCallback? onRerun;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<AuditFinding> list = findings ?? const <AuditFinding>[];
+
+    final Map<String, int> counts = <String, int>{};
+    for (final AuditFinding f in list) {
+      counts[f.severity] = (counts[f.severity] ?? 0) + 1;
+    }
+
+    final String posture;
+    if (findings == null) {
+      posture = running ? 'Running audit…' : 'Run a security audit';
+    } else if (list.isEmpty) {
+      posture = 'All checks passed';
+    } else {
+      posture =
+          '${list.length} ${list.length == 1 ? 'finding' : 'findings'}';
+    }
+
+    const List<String> order = <String>[
+      'critical', 'high', 'medium', 'low', 'info'
+    ];
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              SectionHeader(title: 'Security audit', subtitle: posture),
+              if (counts.isNotEmpty) ...<Widget>[
+                const SizedBox(height: Insets.xs),
+                Wrap(
+                  spacing: Insets.sm,
+                  runSpacing: Insets.xs,
+                  children: <Widget>[
+                    for (final String sev in order)
+                      if ((counts[sev] ?? 0) > 0)
+                        _SeverityChip(severity: sev, count: counts[sev]!),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: Insets.sm),
+        AppButton(
+          label: 'Re-run audit',
+          icon: Icons.refresh,
+          tonal: true,
+          loading: running,
+          onPressed: onRerun,
+        ),
+      ],
+    );
+  }
+}
+
+/// A small colored "N critical" pill summarizing a severity bucket.
+class _SeverityChip extends StatelessWidget {
+  const _SeverityChip({required this.severity, required this.count});
+  final String severity;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Color c = _severityColor(severity);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(Insets.radiusSm),
+        border: Border.all(color: c.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        '$count $severity',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: c,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+/// A live spinner with the current section/step label while the audit runs.
+class _AuditProgress extends StatelessWidget {
+  const _AuditProgress({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          ),
+          const SizedBox(height: Insets.md),
+          Text(
+            label.isEmpty ? 'Auditing…' : label,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The "all clear" empty state shown when no findings remain.
+class _AuditClean extends StatelessWidget {
+  const _AuditClean();
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(Icons.verified_user_outlined, size: 40, color: Palette.ok),
+          const SizedBox(height: Insets.md),
+          Text(
+            'All checks passed',
+            style: theme.textTheme.titleMedium?.copyWith(color: Palette.ok),
+          ),
+          const SizedBox(height: Insets.xs),
+          Text(
+            'No security findings.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One finding rendered as a [GlassCard]: severity badge, title, detail,
+/// recommendation, and a Fix button (or a 'manual' tag when not fixable).
+class _FindingCard extends StatelessWidget {
+  const _FindingCard({
+    required this.finding,
+    required this.state,
+    required this.statusLine,
+    required this.onFix,
+  });
+
+  final AuditFinding finding;
+  final _FixState state;
+  final String? statusLine;
+  final VoidCallback onFix;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Color sev = _severityColor(finding.severity);
+    final bool fixed = state == _FixState.fixed;
+    final bool failed = state == _FixState.failed;
+
+    return GlassCard(
+      padding: const EdgeInsets.all(Insets.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _SeverityBadge(severity: finding.severity, color: sev),
+          const SizedBox(width: Insets.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  finding.title,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (finding.detail.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: Insets.xs),
+                  Text(
+                    finding.detail,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+                if (finding.recommendation.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: Insets.sm),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '→ ',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Palette.teal,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          finding.recommendation,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (statusLine != null && !fixed) ...<Widget>[
+                  const SizedBox(height: Insets.sm),
+                  Text(
+                    statusLine!,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: failed
+                          ? Palette.err
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: Insets.md),
+          _FindingAction(finding: finding, state: state, onFix: onFix),
+        ],
+      ),
+    );
+  }
+}
+
+/// The colored severity badge on the left of a finding card.
+class _SeverityBadge extends StatelessWidget {
+  const _SeverityBadge({required this.severity, required this.color});
+  final String severity;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(Insets.radiusSm),
+        border: Border.all(color: color.withValues(alpha: 0.6)),
+      ),
+      child: Text(
+        severity.toUpperCase(),
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+/// The trailing action on a finding card: Fix button, inline spinner, a green
+/// "Fixed" state, or a subtle "manual" tag for non-fixable findings.
+class _FindingAction extends StatelessWidget {
+  const _FindingAction({
+    required this.finding,
+    required this.state,
+    required this.onFix,
+  });
+
+  final AuditFinding finding;
+  final _FixState state;
+  final VoidCallback onFix;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    if (state == _FixState.fixed) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(Icons.check_circle, size: 18, color: Palette.ok),
+          const SizedBox(width: 6),
+          Text(
+            'Fixed',
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: Palette.ok,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (!finding.fixable) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest
+              .withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(Insets.radiusSm),
+          border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.6),
+          ),
+        ),
+        child: Text(
+          'manual',
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
+    final bool running = state == _FixState.running;
+    return AppButton(
+      label: state == _FixState.failed
+          ? 'Retry'
+          : (finding.fixLabel.isEmpty ? 'Fix' : finding.fixLabel),
+      icon: state == _FixState.failed ? Icons.refresh : Icons.build_outlined,
+      loading: running,
+      onPressed: running ? null : onFix,
+    );
+  }
+}
