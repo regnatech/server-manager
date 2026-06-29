@@ -37,6 +37,7 @@ source "$ROOT/lib/commands/logs.sh"
 source "$ROOT/lib/commands/diff.sh"
 source "$ROOT/lib/commands/release.sh"
 source "$ROOT/lib/commands/uptime.sh"
+source "$ROOT/lib/commands/config.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -483,6 +484,13 @@ t_eq "uptime 200 up"    "$(_uptime_eval '200 0.123')" "200 123 1"
 t_eq "uptime 301 up"    "$(_uptime_eval '301 0.050')" "301 50 1"
 t_eq "uptime 503 down"  "$(_uptime_eval '503 1.5')"   "503 1500 0"
 t_eq "uptime timeout"   "$(_uptime_eval '000 0')"     "0 0 0"
+
+# --- settings (config schema) ---
+t_eq   "config section git"   "$(_config_field github_token 3)" "git"
+t_eq   "config type secret"   "$(_config_field github_token 4)" "secret"
+t_eq   "config label"         "$(_config_field notify_slack_url 2)" "Slack incoming-webhook URL"
+t_true "config known key"     _config_known git_author_name
+t_false "config unknown key"  _config_known totally_made_up_key
 
 # Finding registration yields a valid JSON object with a boolean 'fixable'.
 _AUDIT_ITEMS=()

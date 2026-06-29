@@ -117,14 +117,15 @@ cmd_git() {
               ok "On new branch '${nb}'.";;
     tag)      local tn="${1:-}" tm="${2:-}"; [[ -n "$tn" ]] || die "Usage: server git tag <site> <name> [message]"
               banner "git tag — ${site}"
-              local tagcmd="git tag $(shq "$tn")"; [[ -n "$tm" ]] && tagcmd="git tag -a $(shq "$tn") -m $(shq "$tm")"
+              local ao; ao="$(_git_author_opts)"
+              local tagcmd="git${ao} tag $(shq "$tn")"; [[ -n "$tm" ]] && tagcmd="git${ao} tag -a $(shq "$tn") -m $(shq "$tm")"
               step "Creating tag ${tn}" _git_run "$app_root" "$tagcmd" || die "tag failed."
               step "Pushing tag ${tn}"  _git_run "$app_root" "git push origin $(shq "refs/tags/$tn")" || warn "Tag created locally but push failed.";;
     pr)       _git_cmd_pr "$site" "$app_root" "$@";;
     merge)    _git_cmd_merge "$site" "$app_root" "${1:-}";;
     resolve)  _git_cmd_resolve "$site" "$app_root" "$@";;
     merge-continue) banner "git merge --continue — ${site}"
-              step "Completing the merge" _git_run "$app_root" "git commit --no-edit" || die "Could not complete the merge (unresolved conflicts remain?)."
+              step "Completing the merge" _git_run "$app_root" "git$(_git_author_opts) commit --no-edit" || die "Could not complete the merge (unresolved conflicts remain?)."
               ok "Merge completed.";;
     merge-abort) banner "git merge --abort — ${site}"
               step "Aborting the merge" _git_run "$app_root" "git merge --abort" || die "Could not abort."
@@ -135,6 +136,17 @@ cmd_git() {
 
 # Run a git command in the app root, login user, augmented PATH.
 _git_run() { ssh_app_exec "$1" "$2"; }
+
+# _git_author_opts -> "-c user.name=… -c user.email=…" when configured, else "".
+# Applied to operations that create commits/tags so they carry the identity set
+# in Settings (server config set git_author_name/email).
+_git_author_opts() {
+  local n e; n="$(global_get git_author_name)"; e="$(global_get git_author_email)"
+  local out=""
+  [[ -n "$n" ]] && out+=" -c user.name=$(shq "$n")"
+  [[ -n "$e" ]] && out+=" -c user.email=$(shq "$e")"
+  printf '%s' "$out"
+}
 
 _git_cmd_log() {
   local app_root="$1" raw
@@ -197,15 +209,20 @@ _git_cmd_push() {
 # server git pr <site> <title> [base] — push the branch and open a GitHub PR
 # via the `gh` CLI on the server (must be installed and authenticated there).
 _git_cmd_pr() {
-  local site="$1" app_root="$2" title="${3:-}" base="${4:-main}"
+  local site="$1" app_root="$2" title="${3:-}" base="${4:-}"
   [[ -n "$title" ]] || die "Usage: server git pr <site> <title> [base]"
+  [[ -n "$base" ]] || base="$(global_get git_default_base)"; [[ -n "$base" ]] || base=main
   banner "git pr — ${site}"
   step "Pushing branch to origin" _git_run "$app_root" "git push -u origin HEAD" \
     || die "git push failed."
+  # Use the GitHub token from Settings (server config set github_token) so gh can
+  # authenticate even without an interactive 'gh auth login' on the server.
+  local tok; tok="$(global_get github_token)"
+  local tokpre=""; [[ -n "$tok" ]] && tokpre="GH_TOKEN=$(shq "$tok") "
   local out
   out="$(step_capture "Creating pull request" _git_run "$app_root" \
-    "command -v gh >/dev/null 2>&1 || { echo 'NO_GH'; exit 3; }; gh pr create --base $(shq "$base") --title $(shq "$title") --body 'Opened from server-manager' --fill 2>&1")" \
-    || die "Could not create the PR. Install and authenticate the GitHub CLI ('gh auth login') on ${site}'s server."
+    "command -v gh >/dev/null 2>&1 || { echo 'NO_GH'; exit 3; }; ${tokpre}gh pr create --base $(shq "$base") --title $(shq "$title") --body 'Opened from server-manager' --fill 2>&1")" \
+    || die "Could not create the PR. Set a GitHub token (server config set github_token …) or run 'gh auth login' on ${site}'s server."
   local url; url="$(printf '%s\n' "$out" | grep -Eo 'https://[^ ]+' | tail -1)"
   if json_mode; then
     ui_emit "{\"t\":\"data\",$(json_kv_string kind pr),$(json_kv_raw value "{$(json_kv_string url "$url"),$(json_kv_string title "$title"),$(json_kv_string base "$base")}")}"
