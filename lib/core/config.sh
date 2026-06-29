@@ -136,10 +136,10 @@ remote_site_exists() {
   ssh_exec "test -f $(shq "$(remote_site_path "$1")")"
 }
 
-# remote_site_get <domain> <key> -> value
+# remote_site_get <domain> <key> -> value (exit 0 even if file/key absent)
 remote_site_get() {
   local domain="$1" key="$2"
-  ssh_exec "awk -F= -v k=$(shq "$key") '\$1==k{sub(/^[^=]*=/,\"\");v=\$0} END{print v}' $(shq "$(remote_site_path "$domain")")"
+  ssh_exec "awk -F= -v k=$(shq "$key") '\$1==k{sub(/^[^=]*=/,\"\");v=\$0} END{print v}' $(shq "$(remote_site_path "$domain")") 2>/dev/null || true"
 }
 
 # remote_site_load <domain> — print the whole conf (key=value lines) to stdout.

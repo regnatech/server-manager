@@ -6,9 +6,11 @@
 # Requires a server selected via ssh_use_server.
 
 # php_socket_for <version> -> the php-fpm unix socket for that version, if any.
+# Trailing ': ' guarantees exit 0 even when nothing matches, so a bare
+# assignment at the call site doesn't trip `set -e`.
 php_socket_for() {
   local ver="$1"
-  ssh_exec "for s in /run/php/php${ver}-fpm.sock /run/php-fpm/php${ver}.sock /var/run/php/php${ver}-fpm.sock; do [ -S \"\$s\" ] && { echo \"\$s\"; break; }; done"
+  ssh_exec "for s in /run/php/php${ver}-fpm.sock /run/php-fpm/php${ver}.sock /var/run/php/php${ver}-fpm.sock; do [ -S \"\$s\" ] && { echo \"\$s\"; break; }; done; :"
 }
 
 # php_install <version>

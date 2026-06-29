@@ -36,9 +36,9 @@ history_list() {
   ssh_exec "ls -1 $(shq "$dir") 2>/dev/null | sed -n 's/\\.meta\$//p' | sort -r"
 }
 
-# history_current <domain> -> the current (latest successful) ts
+# history_current <domain> -> the current (latest successful) ts (exit 0 if none)
 history_current() {
-  ssh_exec "cat $(shq "$(_history_current "$1")") 2>/dev/null"
+  ssh_exec "cat $(shq "$(_history_current "$1")") 2>/dev/null || true"
 }
 
 # history_previous <domain> — the most recent successful deploy *before* the
@@ -63,5 +63,5 @@ history_previous() {
 history_get() {
   local domain="$1" ts="$2" key="$3"
   local dir; dir="$(_history_dir "$domain")"
-  ssh_exec "awk -F= -v k=$(shq "$key") '\$1==k{sub(/^[^=]*=/,\"\");v=\$0} END{print v}' $(shq "$dir/$ts.meta") 2>/dev/null"
+  ssh_exec "awk -F= -v k=$(shq "$key") '\$1==k{sub(/^[^=]*=/,\"\");v=\$0} END{print v}' $(shq "$dir/$ts.meta") 2>/dev/null || true"
 }

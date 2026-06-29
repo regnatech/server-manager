@@ -103,7 +103,7 @@ cmd_add() {
   if is_php_framework "$fw"; then
     php_version="$(present "PHP version" "${DISC_PHP_VERSION:-8.3}")"
     php_socket="$DISC_PHP_SOCKET"
-    [[ -z "$php_socket" ]] && php_socket="$(php_socket_for "$php_version")"
+    if [[ -z "$php_socket" ]]; then php_socket="$(php_socket_for "$php_version" || true)"; fi
     if [[ -z "$php_socket" ]]; then
       warn "PHP-FPM ${php_version} does not appear to be installed on ${server}."
       if confirm "Install PHP ${php_version} (FPM + common Laravel extensions + Composer) now?" "Y"; then
