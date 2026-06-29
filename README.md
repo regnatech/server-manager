@@ -92,8 +92,9 @@ it by hand.
 
 ## Requirements
 
-**Control side (CLI host or app control node):** `bash` ≥ 3.2, OpenSSH client.
-Password auth additionally needs `sshpass`.
+**Control side (CLI host or app control node):** `bash` ≥ 3.2 and an OpenSSH
+client. On Linux/macOS these are built in; on **Windows** use Git Bash or WSL
+(see [Install](#install)). Password auth additionally needs `sshpass`.
 
 **Managed server:** SSH access as root **or** a sudo user with passwordless
 sudo (sudo can't prompt over a non‑interactive channel; `server connect` checks
@@ -109,6 +110,8 @@ RHEL‑family (dnf/yum) is supported on a best‑effort basis.
 
 ### Install
 
+**Linux / macOS**
+
 ```bash
 git clone https://github.com/regnatech/server-manager.git
 cd server-manager
@@ -116,6 +119,26 @@ cd server-manager
 # or: make install
 server help
 ```
+
+**Windows**
+
+The engine is a Bash script that drives OpenSSH, so on Windows it runs through
+**Git Bash** (ships with [Git for Windows](https://git-scm.com/download/win)) or
+**WSL** — both provide `bash`, `ssh` and `scp`. A launcher (`bin\server.cmd` /
+`bin\server.ps1`) finds Bash for you, so `server …` works from `cmd` or
+PowerShell just like on Linux:
+
+```powershell
+git clone https://github.com/regnatech/server-manager.git
+cd server-manager
+./install.ps1                # adds bin\ to your PATH (finds Git Bash / WSL)
+# open a new terminal:
+server help
+```
+
+`.gitattributes` keeps the shell scripts LF on Windows checkouts. Password auth
+additionally needs `sshpass` (available in WSL; in Git Bash prefer key auth).
+The desktop app is fully native on Windows — see [Part B](#part-b--the-desktop-app).
 
 ### Quick start
 

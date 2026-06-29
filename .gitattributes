@@ -1,0 +1,15 @@
+# Keep shell scripts LF even when checked out on Windows (CRLF breaks bash).
+*.sh        text eol=lf
+bin/server  text eol=lf
+install.sh  text eol=lf
+tests/**    text eol=lf
+templates/** text eol=lf
+
+# Windows launchers use CRLF.
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary assets shouldn't be normalized.
+*.png       binary
+*.ttf       binary
+*.otf       binary
