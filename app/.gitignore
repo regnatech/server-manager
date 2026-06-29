@@ -8,7 +8,7 @@ build/
 .pub/
 
 # Mobile runners are not targeted by this project.
-android/
+
 ios/
 
 # IDE
