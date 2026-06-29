@@ -122,6 +122,8 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   scheduler <site> [a]     Laravel scheduler cron: status (default) | on | off
   worker <site> [action]   Workers: status (default) | setup | restart | logs | remove
   cron <site> [action]     Cron jobs: list (default) | add "<sched>" "<cmd>" | remove <n>
+  audit [site]             Security audit: findings + one-click fixes
+  audit fix <id> [site]    Apply a single audit remediation by id
 
 ${C_BOLD}SERVER COMMANDS${C_RESET}
   connect <name> user@host Register a server (probes SSH + sudo). Add -p to
@@ -176,6 +178,7 @@ main() {
     scheduler)      _require_cmd_impl cmd_scheduler "$cmd";  cmd_scheduler "$@";;
     worker|workers) _require_cmd_impl cmd_worker "$cmd";     cmd_worker "$@";;
     cron)           _require_cmd_impl cmd_cron "$cmd";       cmd_cron "$@";;
+    audit)          _require_cmd_impl cmd_audit "$cmd";      cmd_audit "$@";;
 
     *)
       err "Unknown command '${cmd}'."

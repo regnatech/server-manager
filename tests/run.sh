@@ -29,6 +29,7 @@ source "$ROOT/lib/providers/php.sh"
 source "$ROOT/lib/providers/workers.sh"
 source "$ROOT/lib/providers/toolchain.sh"
 source "$ROOT/lib/commands/update.sh"
+source "$ROOT/lib/commands/audit.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -228,6 +229,14 @@ CUR=tc_pm_bun;   toolchain_ensure_pm bun  >/dev/null 2>&1 || true
 CUR=tc_git;      toolchain_ensure_git >/dev/null 2>&1 || true
 CUR=tc_phpext;   toolchain_ensure_php_ext 8.3 gd >/dev/null 2>&1 || true
 CUR=tc_unzip;    toolchain_ensure_unzip >/dev/null 2>&1 || true
+CUR=fix_sshroot; audit_fix_ssh_root_login >/dev/null 2>&1 || true
+CUR=fix_sshpw;   audit_fix_ssh_password_auth >/dev/null 2>&1 || true
+CUR=fix_ufw;     audit_fix_firewall >/dev/null 2>&1 || true
+CUR=fix_f2b;     audit_fix_fail2ban >/dev/null 2>&1 || true
+CUR=fix_autoup;  audit_fix_auto_updates >/dev/null 2>&1 || true
+CUR=fix_updates; audit_fix_updates >/dev/null 2>&1 || true
+CUR=fix_envperm; audit_fix_env_perms /a >/dev/null 2>&1 || true
+CUR=fix_envexp;  audit_fix_env_exposed example.com >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
 
 # ---------------------------------------------------------------------------
@@ -360,6 +369,35 @@ t_eq "node: pm not found → install pnpm"           "$(cat "$TRY/picked")" "pm:
 printf 'npm ERR! ENOSPC: no space left on device\n' >"$DIAGLOG"
 _diagnose_node "$DIAGLOG" >/dev/null 2>&1
 t_eq "node: ENOSPC → no auto-fix (non-zero)"       "$?" 1
+
+# ---------------------------------------------------------------------------
+section_t "security audit (parsers + findings)"
+
+SSHDT="$(printf 'permitrootlogin yes\npasswordauthentication no\nport 22\n')"
+t_eq "sshd permitrootlogin"  "$(_audit_eval_sshd "$SSHDT" permitrootlogin)" "yes"
+t_eq "sshd passwordauth no"  "$(_audit_eval_sshd "$SSHDT" passwordauthentication)" "no"
+t_eq "sshd missing key"      "$(_audit_eval_sshd "$SSHDT" x11forwarding)" ""
+
+_audit_eval_ufw_inactive "Status: active";   t_eq "ufw active → not inactive" "$?" 1
+_audit_eval_ufw_inactive "Status: inactive"; t_eq "ufw inactive"             "$?" 0
+_audit_eval_ufw_inactive "absent";           t_eq "ufw absent → inactive"    "$?" 0
+
+_audit_eval_env_mode_loose 644; t_eq "mode 644 loose"     "$?" 0
+_audit_eval_env_mode_loose 640; t_eq "mode 640 not loose" "$?" 1
+_audit_eval_env_mode_loose 600; t_eq "mode 600 not loose" "$?" 1
+_audit_eval_env_mode_loose 666; t_eq "mode 666 loose"     "$?" 0
+
+t_eq "security update count" "$(_audit_eval_count_security "$(printf 'Inst libc security\nInst foo\nInst bar security\n')")" 2
+
+# Finding registration yields a valid JSON object with a boolean 'fixable'.
+_AUDIT_ITEMS=()
+_audit_add testid high 1 "Fix it" "A title" 'detail with "quote"' "do the thing" 2>/dev/null
+t_eq   "one finding registered" "${#_AUDIT_ITEMS[@]}" 1
+AITEM="${_AUDIT_ITEMS[0]}"
+t_true "finding is valid json"  json_line_ok "$AITEM"
+t_true "fixable is boolean"     grep -q '"fixable":true' <<<"$AITEM"
+t_true "severity recorded"      grep -q '"severity":"high"' <<<"$AITEM"
+t_eq   "high counter bumped"    "$_AUDIT_COUNT_HIGH" 1
 
 # ---------------------------------------------------------------------------
 printf '\n────────────────────────────\n'

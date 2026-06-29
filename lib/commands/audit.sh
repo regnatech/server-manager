@@ -1,0 +1,372 @@
+# shellcheck shell=bash
+#
+# audit.sh — `server audit [site]` and `server audit fix <id> [site]`
+#
+# A lightweight security audit: probe how the server is configured, surface
+# findings (severity + recommendation), and — for the ones we know how to fix —
+# expose a one-shot remediation the UI can trigger with a button.
+#
+# In --json mode each check is a step (so the UI shows live progress) and the
+# result is a single {"t":"data","kind":"audit","items":[...]} event. Each item:
+#   {"id","severity":"critical|high|medium|low|info","title","detail",
+#    "recommendation","fixable":bool,"fix_label":"..."}
+#
+# A fix is applied with: server audit fix <id> [site]
+#
+# The check DECISION logic is split into pure `_audit_eval_*` helpers (no SSH)
+# so it can be unit-tested; the SSH calls only gather the raw data.
+
+# Accumulated findings (JSON object strings) for the current run.
+_AUDIT_ITEMS=()
+_AUDIT_COUNT_CRIT=0 _AUDIT_COUNT_HIGH=0 _AUDIT_COUNT_MED=0 _AUDIT_COUNT_LOW=0
+
+# _audit_add <id> <severity> <fixable 0|1> <fix_label> <title> <detail> <recommendation>
+_audit_add() {
+  local id="$1" sev="$2" fixable="$3" fix_label="$4" title="$5" detail="$6" rec="$7"
+  local fx=false; [[ "$fixable" == 1 ]] && fx=true
+  _AUDIT_ITEMS+=("{$(json_kv_string id "$id"),$(json_kv_string severity "$sev"),$(json_kv_raw fixable "$fx"),$(json_kv_string fix_label "$fix_label"),$(json_kv_string title "$title"),$(json_kv_string detail "$detail"),$(json_kv_string recommendation "$rec")}")
+  case "$sev" in
+    critical) _AUDIT_COUNT_CRIT=$((_AUDIT_COUNT_CRIT+1));;
+    high)     _AUDIT_COUNT_HIGH=$((_AUDIT_COUNT_HIGH+1));;
+    medium)   _AUDIT_COUNT_MED=$((_AUDIT_COUNT_MED+1));;
+    *)        _AUDIT_COUNT_LOW=$((_AUDIT_COUNT_LOW+1));;
+  esac
+  # Human (non-JSON) line.
+  if ! json_mode; then
+    local glyph color
+    case "$sev" in
+      critical) color="$C_RED"; glyph="$GLYPH_ERR";;
+      high)     color="$C_RED"; glyph="$GLYPH_ERR";;
+      medium)   color="$C_YELLOW"; glyph="$GLYPH_WARN";;
+      *)        color="$C_BLUE"; glyph="$GLYPH_INFO";;
+    esac
+    printf '  %s%s %-8s%s %s%s\n' "$color" "$glyph" "[$sev]" "$C_RESET" "$title" \
+      "$([[ "$fixable" == 1 ]] && printf ' %s(fixable: server audit fix %s)%s' "$C_GREY" "$id" "$C_RESET")" >&2
+    say "      ${C_GREY}${detail}${C_RESET}"
+    [[ -n "$rec" ]] && say "      ${C_GREY}→ ${rec}${C_RESET}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Pure decision helpers (unit-tested; no SSH).
+# ---------------------------------------------------------------------------
+
+# _audit_eval_sshd <sshd -T output> <key> -> effective value (lowercased)
+_audit_eval_sshd() {
+  printf '%s\n' "$1" | awk -v k="$(printf '%s' "$2" | tr 'A-Z' 'a-z')" \
+    'BEGIN{IGNORECASE=1} tolower($1)==k {print tolower($2); found=1} END{if(!found) print ""}' | head -1
+}
+
+# _audit_eval_ufw_inactive <ufw status text> -> 0 if inactive/absent
+_audit_eval_ufw_inactive() {
+  local t="$1"
+  [[ "$t" == *absent* ]] && return 0
+  printf '%s' "$t" | grep -qiE 'status:[[:space:]]*active' && return 1
+  return 0
+}
+
+# _audit_eval_env_mode_loose <octal mode> -> 0 if group/other can access it
+# (a .env should be owner- or web-group-readable only; world bits are the risk).
+_audit_eval_env_mode_loose() {
+  local mode="$1"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  local other="${mode: -1}"
+  (( other != 0 ))
+}
+
+# _audit_eval_count_security <apt-style output> -> number of security updates
+_audit_eval_count_security() {
+  printf '%s\n' "$1" | grep -ciE 'security' || true
+}
+
+# ---------------------------------------------------------------------------
+# Checks — each gathers data over SSH, then evaluates.
+# ---------------------------------------------------------------------------
+
+audit_check_ssh() {
+  local conf; conf="$(ssh_sudo "sshd -T 2>/dev/null" || true)"
+  [[ -z "$conf" ]] && return 0
+  local root pass
+  root="$(_audit_eval_sshd "$conf" permitrootlogin)"
+  pass="$(_audit_eval_sshd "$conf" passwordauthentication)"
+  if [[ "$root" == "yes" ]]; then
+    _audit_add ssh_root_login high 1 "Disable root SSH login" \
+      "SSH permits direct root login" \
+      "PermitRootLogin is 'yes'. An attacker who guesses the root password gets full control." \
+      "Set PermitRootLogin to 'no' and use a sudo user."
+  fi
+  if [[ "$pass" == "yes" ]]; then
+    _audit_add ssh_password_auth medium 1 "Disable SSH password auth" \
+      "SSH accepts password authentication" \
+      "PasswordAuthentication is 'yes', exposing the server to brute-force attacks." \
+      "Switch to key-based auth and set PasswordAuthentication to 'no' (ensure your key works first)."
+  fi
+}
+
+audit_check_firewall() {
+  local st; st="$(ssh_sudo "command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null || echo absent" || echo absent)"
+  if _audit_eval_ufw_inactive "$st"; then
+    _audit_add firewall high 1 "Enable a firewall" \
+      "No active firewall (ufw inactive or not installed)" \
+      "Every listening service is reachable from the internet." \
+      "Enable ufw allowing only SSH (22), HTTP (80) and HTTPS (443)."
+  fi
+}
+
+audit_check_fail2ban() {
+  local st; st="$(ssh_sudo "systemctl is-active fail2ban 2>/dev/null || echo inactive" || echo inactive)"
+  if [[ "$st" != "active" ]]; then
+    _audit_add fail2ban medium 1 "Install fail2ban" \
+      "fail2ban is not running" \
+      "Brute-force attempts against SSH and web logins are not being throttled or banned." \
+      "Install fail2ban to auto-ban repeat offenders."
+  fi
+}
+
+audit_check_auto_updates() {
+  local st; st="$(ssh_sudo "dpkg -l unattended-upgrades 2>/dev/null | grep -q '^ii' && echo enabled || echo disabled" || echo disabled)"
+  if [[ "$st" != "enabled" ]]; then
+    _audit_add auto_updates medium 1 "Enable automatic security updates" \
+      "Unattended security upgrades are not configured" \
+      "Security patches are not applied automatically, leaving known CVEs open." \
+      "Install and enable unattended-upgrades."
+  fi
+}
+
+audit_check_updates() {
+  local out n
+  out="$(ssh_sudo "apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null | grep -iE '^Inst .*security' || true" || true)"
+  n="$(_audit_eval_count_security "$out")"
+  if (( n > 0 )); then
+    local sev=medium; (( n >= 10 )) && sev=high
+    _audit_add pending_updates "$sev" 1 "Apply ${n} pending security updates" \
+      "${n} security update(s) available" \
+      "Installed packages have published security fixes that are not yet applied." \
+      "Run the security upgrades."
+  fi
+}
+
+# Site-level checks (run when a site scope is given; SITE_* already loaded).
+audit_check_env_perms() {
+  [[ -n "$SITE_APP_ROOT" ]] || return 0
+  local mode; mode="$(ssh_exec "stat -c '%a' $(shq "$SITE_APP_ROOT/.env") 2>/dev/null" || true)"
+  [[ -z "$mode" ]] && return 0
+  if _audit_eval_env_mode_loose "$mode"; then
+    _audit_add env_perms high 1 "Tighten .env permissions" \
+      ".env is world-accessible (mode ${mode})" \
+      "Other users on the box can read database and app credentials from .env." \
+      "chmod the .env to 640 (owner + web group only)."
+  fi
+}
+
+audit_check_env_exposed() {
+  [[ -n "$SITE_DOMAIN" ]] || return 0
+  local code
+  code="$(ssh_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 6 -H $(shq "Host: $SITE_DOMAIN") http://127.0.0.1/.env 2>/dev/null" || true)"
+  if [[ "$code" == "200" ]]; then
+    _audit_add env_exposed critical 1 "Block .env over HTTP" \
+      ".env is downloadable over the web (HTTP 200)" \
+      "Anyone can fetch https://${SITE_DOMAIN}/.env and read every secret." \
+      "Add an nginx rule denying dotfiles and reload."
+  fi
+}
+
+audit_check_https() {
+  [[ -n "$SITE_DOMAIN" ]] || return 0
+  if [[ "$SITE_HTTPS" != "1" ]]; then
+    _audit_add https medium 1 "Enable HTTPS" \
+      "Site is served over plain HTTP" \
+      "Traffic to ${SITE_DOMAIN} (including login sessions) is unencrypted." \
+      "Issue a Let's Encrypt certificate."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# server audit [site]   /   server audit fix <id> [site]
+# ---------------------------------------------------------------------------
+cmd_audit() {
+  local sub="${1:-}"
+  if [[ "$sub" == "fix" ]]; then
+    shift; _audit_fix "$@"; return
+  fi
+
+  local scope="$sub" server
+  if [[ -n "$scope" ]]; then
+    server="$(registry_resolve_for_site "$scope" "$OPT_SERVER")"
+  else
+    server="$(registry_resolve "$OPT_SERVER")"
+  fi
+  ssh_use_server "$server"
+
+  banner "audit — ${server}${scope:+ / ${scope}}"
+  section "Security audit"
+
+  _AUDIT_ITEMS=()
+  _AUDIT_COUNT_CRIT=0 _AUDIT_COUNT_HIGH=0 _AUDIT_COUNT_MED=0 _AUDIT_COUNT_LOW=0
+
+  step "Checking SSH configuration"        audit_check_ssh          || true
+  step "Checking the firewall"             audit_check_firewall     || true
+  step "Checking fail2ban"                 audit_check_fail2ban     || true
+  step "Checking automatic updates"        audit_check_auto_updates || true
+  step "Checking pending security updates" audit_check_updates      || true
+
+  if [[ -n "$scope" ]] && site_load "$scope" 2>/dev/null; then
+    step "Checking .env permissions"   audit_check_env_perms   || true
+    step "Checking .env exposure"      audit_check_env_exposed || true
+    step "Checking HTTPS"              audit_check_https       || true
+  fi
+
+  _audit_emit
+}
+
+# Emit the collected findings (JSON data event, or a TTY summary).
+_audit_emit() {
+  if json_mode; then
+    local items="["; local i first=1
+    for i in "${_AUDIT_ITEMS[@]+"${_AUDIT_ITEMS[@]}"}"; do
+      (( first )) || items+=","; items+="$i"; first=0
+    done
+    items+="]"
+    ui_emit "{\"t\":\"data\",$(json_kv_string kind audit),$(json_kv_raw items "$items")}"
+    return
+  fi
+  local total=$(( _AUDIT_COUNT_CRIT + _AUDIT_COUNT_HIGH + _AUDIT_COUNT_MED + _AUDIT_COUNT_LOW ))
+  if (( total == 0 )); then
+    ok "No issues found — the server passed every check."
+  else
+    report_box "Audit: ${total} finding(s)" \
+      "Critical : ${_AUDIT_COUNT_CRIT}" \
+      "High     : ${_AUDIT_COUNT_HIGH}" \
+      "Medium   : ${_AUDIT_COUNT_MED}" \
+      "Low/info : ${_AUDIT_COUNT_LOW}" \
+      "Fix one  : server audit fix <id>"
+  fi
+}
+
+# _audit_fix <id> [site] — apply a single remediation by finding id.
+_audit_fix() {
+  local id="${1:-}" scope="${2:-}"
+  [[ -n "$id" ]] || die "Usage: server audit fix <id> [site]"
+
+  local server
+  if [[ -n "$scope" ]]; then
+    server="$(registry_resolve_for_site "$scope" "$OPT_SERVER")"
+  else
+    server="$(registry_resolve "$OPT_SERVER")"
+  fi
+  ssh_use_server "$server"
+  [[ -n "$scope" ]] && site_load "$scope" 2>/dev/null || true
+
+  banner "audit fix — ${id} @ ${server}"
+  case "$id" in
+    ssh_root_login)    step "Disabling root SSH login"       audit_fix_ssh_root_login   || die "Fix failed.";;
+    ssh_password_auth) step "Disabling SSH password auth"    audit_fix_ssh_password_auth|| die "Fix failed.";;
+    firewall)          step "Enabling the firewall (ufw)"    audit_fix_firewall         || die "Fix failed.";;
+    fail2ban)          step "Installing fail2ban"            audit_fix_fail2ban         || die "Fix failed.";;
+    auto_updates)      step "Enabling automatic updates"     audit_fix_auto_updates     || die "Fix failed.";;
+    pending_updates)   step "Applying security updates"      audit_fix_updates          || die "Fix failed.";;
+    env_perms)         [[ -n "$SITE_APP_ROOT" ]] || die "This fix needs a site: server audit fix env_perms <site>"
+                       step "Securing .env permissions"      audit_fix_env_perms "$SITE_APP_ROOT" || die "Fix failed.";;
+    env_exposed)       [[ -n "$SITE_DOMAIN" ]] || die "This fix needs a site: server audit fix env_exposed <site>"
+                       step "Blocking dotfiles in nginx"     audit_fix_env_exposed "$SITE_DOMAIN" || die "Fix failed.";;
+    https)             [[ -n "$SITE_DOMAIN" ]] || die "This fix needs a site: server audit fix https <site>"
+                       local email; email="$(global_get le_email)"; [[ -n "$email" ]] || email="$(ask_required "Let's Encrypt email")"
+                       step "Issuing HTTPS certificate"      nginx_enable_https "$SITE_DOMAIN" "$email" || die "Fix failed.";;
+    *) die "Unknown finding id '${id}'.";;
+  esac
+  ok "Applied fix for '${id}'. Re-run 'server audit' to confirm."
+}
+
+# ---------------------------------------------------------------------------
+# Fixes (privileged; run via ssh_sudo / ssh_script --sudo).
+# ---------------------------------------------------------------------------
+_AUDIT_SSHD_DROPIN="/etc/ssh/sshd_config.d/00-server-manager.conf"
+
+audit_fix_ssh_root_login() {
+  ssh_script --sudo <<EOF
+set -e
+d=$(shq "$_AUDIT_SSHD_DROPIN"); mkdir -p "\$(dirname "\$d")"; touch "\$d"
+grep -q '^PermitRootLogin' "\$d" 2>/dev/null \
+  && sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' "\$d" \
+  || echo 'PermitRootLogin no' >> "\$d"
+sshd -t && { systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || service ssh reload; }
+echo "root login disabled"
+EOF
+}
+
+audit_fix_ssh_password_auth() {
+  ssh_script --sudo <<EOF
+set -e
+d=$(shq "$_AUDIT_SSHD_DROPIN"); mkdir -p "\$(dirname "\$d")"; touch "\$d"
+grep -q '^PasswordAuthentication' "\$d" 2>/dev/null \
+  && sed -i 's/^PasswordAuthentication.*/PasswordAuthentication no/' "\$d" \
+  || echo 'PasswordAuthentication no' >> "\$d"
+sshd -t && { systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || service ssh reload; }
+echo "password auth disabled"
+EOF
+}
+
+audit_fix_firewall() {
+  ssh_script --sudo <<'EOF'
+set -e
+export DEBIAN_FRONTEND=noninteractive
+command -v ufw >/dev/null 2>&1 || { apt-get update -y; apt-get install -y ufw; }
+ufw allow OpenSSH 2>/dev/null || ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+echo "firewall enabled"
+EOF
+}
+
+audit_fix_fail2ban() {
+  ssh_script --sudo <<'EOF'
+set -e
+export DEBIAN_FRONTEND=noninteractive
+if command -v apt-get >/dev/null 2>&1; then apt-get update -y; apt-get install -y fail2ban
+elif command -v dnf >/dev/null 2>&1; then dnf install -y fail2ban
+elif command -v yum >/dev/null 2>&1; then yum install -y fail2ban
+else echo "no package manager for fail2ban" >&2; exit 1; fi
+systemctl enable --now fail2ban
+echo "fail2ban active"
+EOF
+}
+
+audit_fix_auto_updates() {
+  ssh_script --sudo <<'EOF'
+set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y unattended-upgrades
+echo 'APT::Periodic::Update-Package-Lists "1";' >/etc/apt/apt.conf.d/20auto-upgrades
+echo 'APT::Periodic::Unattended-Upgrade "1";' >>/etc/apt/apt.conf.d/20auto-upgrades
+systemctl enable --now unattended-upgrades 2>/dev/null || true
+echo "automatic updates enabled"
+EOF
+}
+
+audit_fix_updates() {
+  ssh_sudo "export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get upgrade -y && echo 'security updates applied'"
+}
+
+audit_fix_env_perms() {
+  local app_root="$1"
+  ssh_sudo "f=$(shq "$app_root/.env"); [ -f \"\$f\" ] && { owner=\$(stat -c '%U' \"\$app_root\" 2>/dev/null || echo www-data); chgrp www-data \"\$f\" 2>/dev/null || true; chmod 640 \"\$f\"; echo \"perms set to 640\"; } || echo 'no .env'"
+}
+
+audit_fix_env_exposed() {
+  local domain="$1"
+  ssh_script --sudo <<EOF
+set -e
+domain=$(shq "$domain")
+for f in "/etc/nginx/sites-available/\${domain}" "/etc/nginx/sites-available/\${domain}.conf" "/etc/nginx/conf.d/\${domain}.conf"; do
+  [ -f "\$f" ] || continue
+  grep -q 'location ~ /\\\\.' "\$f" && { echo "deny rule already present"; exit 0; }
+  # Insert a dotfile-deny block just inside the first server { ... }.
+  awk 'BEGIN{done=0} /server[[:space:]]*\{/ && !done {print; print "    location ~ /\\\\.(?!well-known).* { deny all; }"; done=1; next} {print}' "\$f" >"\$f.tmp" && mv "\$f.tmp" "\$f"
+  nginx -t && { systemctl reload nginx || service nginx reload; }
+  echo "dotfiles blocked"; exit 0
+done
+echo "nginx vhost for \${domain} not found" >&2; exit 1
+EOF
+}
