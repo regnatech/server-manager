@@ -15,9 +15,34 @@ import '../widgets/deploy_timeline.dart';
 import '../widgets/framework_chip.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_dot.dart';
+import '../widgets/terminal_panel.dart';
 
-/// Tabbed management view for a single site. Deploy tab hosts the live
-/// timeline; secondary tabs are scaffolded against the right CLI calls.
+/// One selectable tool in the site detail toolbar.
+class _Tool {
+  const _Tool(this.key, this.label, this.icon);
+  final String key;
+  final String label;
+  final IconData icon;
+}
+
+/// All tools shown at the top of the site detail screen, in display order.
+/// The [key] doubles as the SM_TAB deep-link value.
+const List<_Tool> _tools = <_Tool>[
+  _Tool('overview', 'Overview', Icons.dashboard_outlined),
+  _Tool('deploy', 'Deploy', Icons.rocket_launch_outlined),
+  _Tool('cron', 'Cron', Icons.schedule_outlined),
+  _Tool('workers', 'Workers', Icons.memory_outlined),
+  _Tool('logs', 'Logs', Icons.article_outlined),
+  _Tool('ssl', 'SSL', Icons.lock_outline),
+  _Tool('database', 'Database', Icons.storage_outlined),
+];
+
+/// Single-screen management view for a site: every tool selectable at the top,
+/// and an always-connected per-site shell pinned to the bottom.
+///
+/// The Deploy tool hosts the live timeline; the others are scaffolded against
+/// the right CLI calls. SM_TAB deep-links the initial tool; SM_AUTODEPLOY=1
+/// auto-kicks a deploy on the Deploy tool.
 class SiteDetailScreen extends ConsumerStatefulWidget {
   const SiteDetailScreen({super.key, required this.domain});
 
@@ -27,29 +52,27 @@ class SiteDetailScreen extends ConsumerStatefulWidget {
   ConsumerState<SiteDetailScreen> createState() => _SiteDetailScreenState();
 }
 
-class _SiteDetailScreenState extends ConsumerState<SiteDetailScreen>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabs =
-      TabController(length: 6, vsync: this, initialIndex: _initialTabIndex());
+class _SiteDetailScreenState extends ConsumerState<SiteDetailScreen> {
+  late int _selectedTool = _initialToolIndex();
 
-  // Optional deep-link to a specific tab (used by demo/screenshot launches):
-  // SM_TAB=overview|deploy|cron|workers|logs|ssl.
-  static int _initialTabIndex() {
-    const List<String> order = <String>[
-      'overview', 'deploy', 'cron', 'workers', 'logs', 'ssl'
-    ];
-    final int i = order.indexOf((envVar('SM_TAB') ?? '').toLowerCase());
+  // Optional deep-link to a specific tool (used by demo/screenshot launches):
+  // SM_TAB=overview|deploy|cron|workers|logs|ssl|database.
+  static int _initialToolIndex() {
+    final String want = (envVar('SM_TAB') ?? '').toLowerCase();
+    final int i = _tools.indexWhere((_Tool t) => t.key == want);
     return i < 0 ? 0 : i;
   }
 
-  @override
-  void dispose() {
-    _tabs.dispose();
-    super.dispose();
+  void _select(int index) {
+    if (_selectedTool != index) setState(() => _selectedTool = index);
   }
+
+  /// Switches to the Deploy tool (used by the always-visible quick action).
+  void _goDeploy() => _select(_tools.indexWhere((_Tool t) => t.key == 'deploy'));
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
     final Site? site = ref.watch(siteByDomainProvider(widget.domain));
 
     return Scaffold(
@@ -75,41 +98,286 @@ class _SiteDetailScreenState extends ConsumerState<SiteDetailScreen>
             ],
           ],
         ),
-        bottom: TabBar(
-          controller: _tabs,
-          isScrollable: true,
-          tabs: const <Tab>[
-            Tab(text: 'Overview', icon: Icon(Icons.dashboard_outlined)),
-            Tab(text: 'Deploy', icon: Icon(Icons.rocket_launch_outlined)),
-            Tab(text: 'Cron', icon: Icon(Icons.schedule_outlined)),
-            Tab(text: 'Workers', icon: Icon(Icons.memory_outlined)),
-            Tab(text: 'Logs', icon: Icon(Icons.article_outlined)),
-            Tab(text: 'SSL', icon: Icon(Icons.lock_outline)),
-          ],
+      ),
+      body: Column(
+        children: <Widget>[
+          // TOP: tools + selected tool content.
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                _SiteSummaryStrip(
+                  site: site,
+                  onDeploy: _goDeploy,
+                ),
+                _ToolBar(
+                  selected: _selectedTool,
+                  onSelect: _select,
+                ),
+                Expanded(
+                  child: IndexedStack(
+                    index: _selectedTool,
+                    children: <Widget>[
+                      _OverviewTab(site: site, domain: widget.domain),
+                      _DeployTab(domain: widget.domain),
+                      _DataListTab(
+                        domain: widget.domain,
+                        kind: 'cron',
+                        emptyLabel: 'No scheduled tasks',
+                        builder: (CliService c) => c.cronList(widget.domain),
+                        columns: const <String>[
+                          'schedule', 'command', 'last', 'status'
+                        ],
+                      ),
+                      _DataListTab(
+                        domain: widget.domain,
+                        kind: 'workers',
+                        emptyLabel: 'No workers configured',
+                        builder: (CliService c) => c.workersList(widget.domain),
+                        columns: const <String>['name', 'procs', 'status'],
+                      ),
+                      _LogsTab(domain: widget.domain),
+                      _SslTab(domain: widget.domain),
+                      _DatabaseTab(site: site, domain: widget.domain),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Splitter.
+          Container(
+            height: 1,
+            color: theme.colorScheme.outline.withValues(alpha: 0.6),
+          ),
+          // BOTTOM: always-on per-site shell.
+          Expanded(
+            flex: 2,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 200),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(Insets.radiusMd),
+                ),
+                child: ColoredBox(
+                  color: Palette.darkBg,
+                  child: TerminalPanel(
+                    shellProvider: siteShellProvider(widget.domain),
+                    title: 'Shell — ${site?.server ?? widget.domain}'
+                        ':${siteAppRoot(widget.domain)}',
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A compact one-line site summary with the always-visible quick actions.
+class _SiteSummaryStrip extends StatelessWidget {
+  const _SiteSummaryStrip({required this.site, required this.onDeploy});
+
+  final Site? site;
+  final VoidCallback onDeploy;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Site? s = site;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Insets.lg,
+        vertical: Insets.sm,
+      ),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: theme.colorScheme.outline.withValues(alpha: 0.6),
+          ),
         ),
       ),
-      body: TabBarView(
-        controller: _tabs,
+      child: Row(
         children: <Widget>[
-          _OverviewTab(site: site, domain: widget.domain),
-          _DeployTab(domain: widget.domain),
-          _DataListTab(
-            domain: widget.domain,
-            kind: 'cron',
-            emptyLabel: 'No scheduled tasks',
-            builder: (CliService c) => c.cronList(widget.domain),
-            columns: const <String>['schedule', 'command', 'last', 'status'],
+          Expanded(
+            child: s == null
+                ? Text(
+                    'Loading…',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  )
+                : Wrap(
+                    spacing: Insets.sm,
+                    runSpacing: Insets.xs,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: <Widget>[
+                      _MetaChip(icon: Icons.dns_outlined, label: s.server),
+                      _MetaChip(
+                        icon: Icons.layers_outlined,
+                        label: s.framework,
+                      ),
+                      _MetaChip(
+                        icon: s.tls ? Icons.lock_outline : Icons.lock_open,
+                        label: s.tls ? 'TLS on' : 'TLS off',
+                        color: s.tls ? Palette.ok : Palette.warn,
+                      ),
+                      _MetaChip(
+                        icon: Icons.favorite_outline,
+                        label: s.health ?? 'unknown',
+                        color: Palette.forHealth(s.health),
+                      ),
+                      _MetaChip(
+                        icon: Icons.schedule_outlined,
+                        label: s.lastDeploy ?? 'never',
+                      ),
+                    ],
+                  ),
           ),
-          _DataListTab(
-            domain: widget.domain,
-            kind: 'workers',
-            emptyLabel: 'No workers configured',
-            builder: (CliService c) => c.workersList(widget.domain),
-            columns: const <String>['name', 'procs', 'status'],
+          const SizedBox(width: Insets.sm),
+          IconButton(
+            tooltip: 'Open https://${site?.domain ?? ''}',
+            icon: const Icon(Icons.open_in_new, size: 18),
+            onPressed: site == null ? null : () {},
           ),
-          _LogsTab(domain: widget.domain),
-          _SslTab(domain: widget.domain),
+          const SizedBox(width: Insets.xs),
+          AppButton(
+            label: 'Deploy',
+            icon: Icons.rocket_launch,
+            onPressed: onDeploy,
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// A tiny labeled chip used in the summary strip.
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({required this.icon, required this.label, this.color});
+  final IconData icon;
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Color c = color ?? theme.colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(Insets.radiusSm),
+        border: Border.all(color: c.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(icon, size: 13, color: c),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The horizontal "Tools" selector: all tools as small tappable cards.
+class _ToolBar extends StatelessWidget {
+  const _ToolBar({required this.selected, required this.onSelect});
+
+  final int selected;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Insets.lg,
+        Insets.md,
+        Insets.lg,
+        Insets.sm,
+      ),
+      child: Wrap(
+        spacing: Insets.sm,
+        runSpacing: Insets.sm,
+        children: <Widget>[
+          for (int i = 0; i < _tools.length; i++)
+            _ToolButton(
+              tool: _tools[i],
+              selected: i == selected,
+              onTap: () => onSelect(i),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToolButton extends StatelessWidget {
+  const _ToolButton({
+    required this.tool,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _Tool tool;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Color accent = theme.colorScheme.primary;
+    final Color fg = selected ? accent : theme.colorScheme.onSurfaceVariant;
+    return Material(
+      color: selected
+          ? accent.withValues(alpha: 0.14)
+          : theme.colorScheme.surface,
+      borderRadius: BorderRadius.circular(Insets.radiusMd),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(Insets.radiusMd),
+        child: AnimatedContainer(
+          duration: AppMotion.fast,
+          curve: AppMotion.standard,
+          padding: const EdgeInsets.symmetric(
+            horizontal: Insets.md,
+            vertical: Insets.sm,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(Insets.radiusMd),
+            border: Border.all(
+              color: selected
+                  ? accent.withValues(alpha: 0.6)
+                  : theme.colorScheme.outline.withValues(alpha: 0.6),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(tool.icon, size: 16, color: fg),
+              const SizedBox(width: Insets.sm),
+              Text(
+                tool.label,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: fg,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -504,6 +772,72 @@ class _SslTabState extends ConsumerState<_SslTab> {
           ),
         );
       },
+    );
+  }
+}
+
+// --- Database ---------------------------------------------------------------
+
+class _DatabaseTab extends StatelessWidget {
+  const _DatabaseTab({required this.site, required this.domain});
+  final Site? site;
+  final String domain;
+
+  @override
+  Widget build(BuildContext context) {
+    if (site == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final ThemeData theme = Theme.of(context);
+    final String db = '${domain.split('.').first}_prod';
+    final List<(String, String)> rows = <(String, String)>[
+      ('Engine', 'MySQL 8.0'),
+      ('Database', db),
+      ('User', 'deploy'),
+      ('Host', '127.0.0.1:3306'),
+      ('Status', site!.health == 'down' ? 'unreachable' : 'connected'),
+    ];
+    return ListView(
+      padding: const EdgeInsets.all(Insets.lg),
+      children: <Widget>[
+        const SectionHeader(
+          title: 'Database',
+          subtitle: 'Connection details for this site',
+        ),
+        const SizedBox(height: Insets.md),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(Insets.lg),
+            child: Column(
+              children: <Widget>[
+                for (final (String, String) r in rows)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: <Widget>[
+                        SizedBox(
+                          width: 140,
+                          child: Text(
+                            r.$1,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: SelectableText(
+                            r.$2,
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

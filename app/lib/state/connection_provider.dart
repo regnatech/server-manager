@@ -194,3 +194,47 @@ final terminalShellProvider = FutureProvider<RemoteShell>((ref) async {
   }
   return session.openShell();
 });
+
+/// Derives a plausible application root for [domain] from its first label, e.g.
+/// `clicketta.site` → `/var/www/clicketta`.
+String siteAppRoot(String domain) {
+  final String slug = domain.split('.').first;
+  return '/var/www/$slug';
+}
+
+/// Resolves a per-site [RemoteShell], already landed in the site's app dir.
+///
+/// In demo mode (or with no live session / on web) it returns a site-flavored
+/// [DemoShell]: user `deploy`, host set to the site's server, cwd set to the
+/// site's app root, and a scripted intro that simulates being dropped into the
+/// app directory (`git log` + `php artisan --version`). On the live path it
+/// opens the session PTY and best-effort `cd`s into the app root. The returned
+/// shell is closed by the embedding [TerminalPanel] on dispose.
+final siteShellProvider =
+    FutureProvider.family<RemoteShell, String>((ref, domain) async {
+  final bool demo = ref.watch(demoModeProvider);
+  final SshSession? session = ref.watch(connectionProvider).session;
+
+  // Look up the site's server (best-effort) so the prompt host is accurate.
+  String host = 'prod-1';
+  for (final Map<String, dynamic> s in DemoData.sites) {
+    if (s['domain'] == domain) {
+      host = (s['server'] as String?) ?? host;
+      break;
+    }
+  }
+  final String appRoot = siteAppRoot(domain);
+
+  if (demo || session == null || !session.isConnected) {
+    return DemoShell(
+      host: host,
+      cwd: appRoot,
+      intro: <String>['git log --oneline -1', 'php artisan --version'],
+    );
+  }
+
+  final RemoteShell shell = await session.openShell();
+  // Best-effort: land the operator in the app directory.
+  shell.write('cd $appRoot 2>/dev/null\n');
+  return shell;
+});

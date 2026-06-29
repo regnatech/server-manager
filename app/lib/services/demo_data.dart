@@ -411,13 +411,26 @@ class DemoCliService implements CliService {
 /// short scripted intro so a screenshot taken shortly after launch already
 /// shows a populated session.
 class DemoShell implements RemoteShell {
-  DemoShell() {
+  DemoShell({
+    String user = 'deploy',
+    String host = 'control-node',
+    String cwd = '~',
+    List<String>? intro,
+  })  : _user = user,
+        _hostShort = host,
+        _cwd = cwd,
+        _intro = intro {
     // Emit the intro on the next microtask so listeners attach first.
     scheduleMicrotask(_playIntro);
   }
 
-  static const String _user = 'deploy';
-  static const String _hostShort = 'control-node';
+  final String _user;
+  final String _hostShort;
+  final String _cwd;
+
+  /// Optional scripted lines already-"run" before the first live prompt. Each
+  /// entry is echoed as a typed command followed by its [_respond] output.
+  final List<String>? _intro;
 
   // ANSI colors (works in xterm): bright green user@host, blue cwd.
   static const String _reset = '\x1b[0m';
@@ -432,7 +445,7 @@ class DemoShell implements RemoteShell {
   bool _closed = false;
 
   String get _prompt =>
-      '$_green$_user@$_hostShort$_reset:$_blue~$_reset\$ ';
+      '$_green$_user@$_hostShort$_reset:$_blue$_cwd$_reset\$ ';
 
   @override
   Stream<String> get output => _controller.stream;
@@ -444,20 +457,19 @@ class DemoShell implements RemoteShell {
   /// Auto-plays a couple of already-"run" commands then a fresh prompt, so the
   /// terminal looks alive immediately for screenshots.
   Future<void> _playIntro() async {
+    final List<String> script = _intro ?? const <String>['whoami', 'server list'];
+
     _emit('${_dim}Server Manager — interactive shell (demo)$_reset\r\n');
     await Future<void>.delayed(const Duration(milliseconds: 250));
 
-    _emit(_prompt);
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    _emit('whoami\r\n');
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-    _emit('${_respond('whoami')}\r\n');
-
-    _emit(_prompt);
-    await Future<void>.delayed(const Duration(milliseconds: 600));
-    _emit('server list\r\n');
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    _emit('${_respond('server list')}\r\n');
+    for (final String cmd in script) {
+      _emit(_prompt);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      _emit('$cmd\r\n');
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final String out = _respond(cmd);
+      if (out.isNotEmpty) _emit('$out\r\n');
+    }
 
     _emit(_prompt);
     _introDone = true;
@@ -512,7 +524,23 @@ class DemoShell implements RemoteShell {
       case 'whoami':
         return _user;
       case 'pwd':
-        return '/home/$_user';
+        return _cwd == '~' ? '/home/$_user' : _cwd;
+      case 'git':
+        if (args.isNotEmpty && args.first == 'log') {
+          return 'a77b3e1 Tighten checkout rate limiting';
+        }
+        if (args.isNotEmpty && args.first == 'status') {
+          return 'On branch main\r\nnothing to commit, working tree clean';
+        }
+        return 'usage: git <log|status|pull> ...';
+      case 'php':
+        if (args.isNotEmpty && args.first == 'artisan') {
+          if (args.length >= 2 && args[1] == '--version') {
+            return 'Laravel Framework 11.9.2';
+          }
+          return 'Laravel Framework 11.9.2 (artisan)';
+        }
+        return 'PHP 8.3.8 (cli)';
       case 'uname':
         return 'Linux $_hostShort 6.8.0-45-generic #45-Ubuntu SMP '
             'x86_64 GNU/Linux';
