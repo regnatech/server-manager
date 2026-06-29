@@ -49,7 +49,11 @@ _db_import() {
 #   Shared by the wizard and `server db import`: upload the dump and load it.
 _db_do_import() {
   local domain="$1" app_root="$2" localfile="$3"
-  # Expand ~ and make absolute-ish for the existence check.
+  # Trim stray whitespace (e.g. a trailing space from paste/tab-completion),
+  # strip surrounding quotes, then expand a leading ~.
+  localfile="$(trim "$localfile")"
+  localfile="${localfile%\"}"; localfile="${localfile#\"}"
+  localfile="${localfile%\'}"; localfile="${localfile#\'}"
   localfile="${localfile/#\~/$HOME}"
   [[ -f "$localfile" ]] || { err "File not found: ${localfile}"; return 1; }
 
@@ -86,7 +90,7 @@ _db_export() {
   site_load "$site" || die "Site '${site}' is not registered on '${server}'."
 
   [[ -n "$out" ]] || out="./${site}-$(timestamp).sql.gz"
-  out="${out/#\~/$HOME}"
+  out="$(trim "$out")"; out="${out/#\~/$HOME}"
 
   if step "Dumping database to ${out}" _db_export_to_file "$SITE_APP_ROOT" "$out"; then
     ok "Database exported to ${out} ($(_human_size "$out"))."
