@@ -33,6 +33,16 @@ and working-tree status, create branch/tag/PR, a one-click **Push & Deploy**
 Settings → Notifications wires Slack / Telegram so deploys (and audit findings)
 can post a message on success or failure.
 
+| Atomic releases (instant rollback) | Health + per-site availability |
+|---|---|
+| ![releases](15-releases.png) | ![health-uptime](16-health-uptime.png) |
+
+Releases lists each atomic deploy with the live `current` marker and an instant
+per-release **Rollback**; the Health screen now also shows per-site uptime
+(status code + response time). The Deploy tab has a **Preview changes** diff
+(commits + pending migrations), the dashboard a **Deploy all sites** action, and
+the audit views a **history** of snapshots over time.
+
 ## How these were generated
 
 ```bash
