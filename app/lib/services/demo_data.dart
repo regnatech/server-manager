@@ -548,6 +548,68 @@ class DemoCliService implements CliService {
   }
 
   @override
+  Stream<CliEvent> metrics() async* {
+    // Mildly dynamic per call so successive refreshes visibly differ.
+    final int seed = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    int jitter(int base, int spread) => base + (seed % (2 * spread + 1)) - spread;
+
+    yield BannerEvent(label: 'Reading server metrics');
+    final List<(String, String)> steps = <(String, String)>[
+      ('m1', 'Reading load & CPU'),
+      ('m2', 'Reading memory & disk'),
+      ('m3', 'Checking services'),
+    ];
+    for (final (String, String) s in steps) {
+      yield StepStart(id: s.$1, label: s.$2);
+      await Future<void>.delayed(const Duration(milliseconds: 420));
+      yield StepEnd(id: s.$1, ok: true, dur: 0.4);
+      await Future<void>.delayed(const Duration(milliseconds: 140));
+    }
+
+    final int cpuPct = jitter(23, 8).clamp(2, 99);
+    const int memTotal = 8000000000;
+    final int memUsed =
+        (memTotal * (jitter(26, 6).clamp(5, 95)) / 100).round();
+    const int diskTotal = 50000000000;
+    final int diskUsed =
+        (diskTotal * (jitter(24, 3).clamp(5, 95)) / 100).round();
+
+    yield DataEvent(
+      kind: 'metrics',
+      value: <String, dynamic>{
+        'server': 'prod-1',
+        'host': '203.0.113.10',
+        'uptime_seconds': 1234567,
+        'load': <double>[
+          (jitter(42, 12) / 100),
+          (jitter(55, 10) / 100),
+          (jitter(61, 8) / 100),
+        ],
+        'cpu_count': 4,
+        'cpu_pct': cpuPct,
+        'mem': <String, dynamic>{
+          'used': memUsed,
+          'total': memTotal,
+          'pct': (memUsed / memTotal * 100).round(),
+        },
+        'disk': <String, dynamic>{
+          'used': diskUsed,
+          'total': diskTotal,
+          'pct': (diskUsed / diskTotal * 100).round(),
+        },
+        'services': <Map<String, dynamic>>[
+          <String, dynamic>{'name': 'nginx', 'active': true},
+          <String, dynamic>{'name': 'php8.3-fpm', 'active': true},
+          <String, dynamic>{'name': 'mysql', 'active': true},
+          <String, dynamic>{'name': 'redis', 'active': false},
+          <String, dynamic>{'name': 'supervisor', 'active': true},
+        ],
+      },
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
   Stream<CliEvent> audit([String? domain]) async* {
     final bool server = domain == null || domain.isEmpty;
     yield BannerEvent(

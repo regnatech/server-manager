@@ -38,6 +38,11 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ),
           IconButton(
+            tooltip: 'Server health',
+            icon: const Icon(Icons.monitor_heart_outlined),
+            onPressed: () => context.go('/health'),
+          ),
+          IconButton(
             tooltip: 'Security audit',
             icon: const Icon(Icons.shield_outlined),
             onPressed: () => context.go('/audit'),
