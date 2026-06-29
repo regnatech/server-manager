@@ -124,6 +124,7 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   cron <site> [action]     Cron jobs: list (default) | add "<sched>" "<cmd>" | remove <n>
   audit [site]             Security audit: findings + one-click fixes
   audit fix <id> [site]    Apply a single audit remediation by id
+  audit fixall [site]      Apply every auto-fixable finding in one go
   metrics [server]         Health snapshot: CPU, memory, disk, load, services
   git <action> <site> …    Git: log|status|branches|checkout|fetch|pull|
                            branch <name>|tag <name>|pr <title>|push [--deploy]|

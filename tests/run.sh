@@ -452,6 +452,14 @@ t_true "fixable is boolean"     grep -q '"fixable":true' <<<"$AITEM"
 t_true "severity recorded"      grep -q '"severity":"high"' <<<"$AITEM"
 t_eq   "high counter bumped"    "$_AUDIT_COUNT_HIGH" 1
 
+# fixall only collects the auto-fixable ids.
+_AUDIT_ITEMS=(); _AUDIT_FIX_IDS=()
+_audit_add firewall high 1 "fw" t d r 2>/dev/null
+_audit_add open_ports low 0 "" t d r 2>/dev/null
+_audit_add fail2ban medium 1 "f2b" t d r 2>/dev/null
+t_eq "fixall: 2 fixable ids"  "${#_AUDIT_FIX_IDS[@]}" 2
+t_eq "fixall: ids in order"   "${_AUDIT_FIX_IDS[*]}" "firewall fail2ban"
+
 # ---------------------------------------------------------------------------
 printf '\n────────────────────────────\n'
 printf 'RESULT: %d passed, %d failed\n' "$PASS" "$FAIL"

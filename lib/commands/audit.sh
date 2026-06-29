@@ -18,12 +18,13 @@
 
 # Accumulated findings (JSON object strings) for the current run.
 _AUDIT_ITEMS=()
+_AUDIT_FIX_IDS=()
 _AUDIT_COUNT_CRIT=0 _AUDIT_COUNT_HIGH=0 _AUDIT_COUNT_MED=0 _AUDIT_COUNT_LOW=0
 
 # _audit_add <id> <severity> <fixable 0|1> <fix_label> <title> <detail> <recommendation>
 _audit_add() {
   local id="$1" sev="$2" fixable="$3" fix_label="$4" title="$5" detail="$6" rec="$7"
-  local fx=false; [[ "$fixable" == 1 ]] && fx=true
+  local fx=false; [[ "$fixable" == 1 ]] && { fx=true; _AUDIT_FIX_IDS+=("$id"); }
   _AUDIT_ITEMS+=("{$(json_kv_string id "$id"),$(json_kv_string severity "$sev"),$(json_kv_raw fixable "$fx"),$(json_kv_string fix_label "$fix_label"),$(json_kv_string title "$title"),$(json_kv_string detail "$detail"),$(json_kv_string recommendation "$rec")}")
   case "$sev" in
     critical) _AUDIT_COUNT_CRIT=$((_AUDIT_COUNT_CRIT+1));;
@@ -251,6 +252,9 @@ cmd_audit() {
   if [[ "$sub" == "fix" ]]; then
     shift; _audit_fix "$@"; return
   fi
+  if [[ "$sub" == "fixall" ]]; then
+    shift; _audit_fixall "$@"; return
+  fi
 
   local scope="$sub" server
   if [[ -n "$scope" ]]; then
@@ -263,7 +267,15 @@ cmd_audit() {
   banner "audit — ${server}${scope:+ / ${scope}}"
   section "Security audit"
 
-  _AUDIT_ITEMS=()
+  _audit_run_checks "$scope"
+  _audit_emit
+}
+
+# _audit_run_checks <scope> — reset state and run every check as a step.
+# Populates _AUDIT_ITEMS / _AUDIT_FIX_IDS / counters. Assumes a server is set.
+_audit_run_checks() {
+  local scope="$1"
+  _AUDIT_ITEMS=(); _AUDIT_FIX_IDS=()
   _AUDIT_COUNT_CRIT=0 _AUDIT_COUNT_HIGH=0 _AUDIT_COUNT_MED=0 _AUDIT_COUNT_LOW=0
 
   step "Checking SSH configuration"        audit_check_ssh          || true
@@ -280,8 +292,38 @@ cmd_audit() {
     step "Checking .env exposure"      audit_check_env_exposed || true
     step "Checking HTTPS"              audit_check_https       || true
   fi
+}
 
-  _audit_emit
+# server audit fixall [site] — run the audit, then apply every fixable finding.
+_audit_fixall() {
+  local scope="${1:-}" server
+  if [[ -n "$scope" ]]; then
+    server="$(registry_resolve_for_site "$scope" "$OPT_SERVER")"
+  else
+    server="$(registry_resolve "$OPT_SERVER")"
+  fi
+  ssh_use_server "$server"
+  [[ -n "$scope" ]] && site_load "$scope" 2>/dev/null || true
+
+  banner "audit fixall — ${server}${scope:+ / ${scope}}"
+  section "Security audit"
+  _audit_run_checks "$scope"
+
+  local ids=("${_AUDIT_FIX_IDS[@]+"${_AUDIT_FIX_IDS[@]}"}")
+  if (( ${#ids[@]} == 0 )); then
+    ok "Nothing to fix — no auto-fixable findings."
+    json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind audit_fixall),$(json_kv_raw value "{$(json_kv_raw applied 0),$(json_kv_raw failed 0)}")}"
+    return 0
+  fi
+
+  section "Applying ${#ids[@]} fix(es)"
+  local applied=0 failed=0 id
+  for id in "${ids[@]}"; do
+    if _audit_apply_fix "$id"; then applied=$((applied+1)); else failed=$((failed+1)); warn "Fix '${id}' failed — continuing."; fi
+  done
+
+  ok "Applied ${applied} fix(es); ${failed} failed. Re-run 'server audit' to confirm."
+  json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind audit_fixall),$(json_kv_raw value "{$(json_kv_raw applied "$applied"),$(json_kv_raw failed "$failed")}")}"
 }
 
 # Emit the collected findings (JSON data event, or a TTY summary).
@@ -323,25 +365,37 @@ _audit_fix() {
   [[ -n "$scope" ]] && site_load "$scope" 2>/dev/null || true
 
   banner "audit fix — ${id} @ ${server}"
-  case "$id" in
-    ssh_root_login)    step "Disabling root SSH login"       audit_fix_ssh_root_login   || die "Fix failed.";;
-    ssh_password_auth) step "Disabling SSH password auth"    audit_fix_ssh_password_auth|| die "Fix failed.";;
-    firewall)          step "Enabling the firewall (ufw)"    audit_fix_firewall         || die "Fix failed.";;
-    fail2ban)          step "Installing fail2ban"            audit_fix_fail2ban         || die "Fix failed.";;
-    auto_updates)      step "Enabling automatic updates"     audit_fix_auto_updates     || die "Fix failed.";;
-    pending_updates)   step "Applying security updates"      audit_fix_updates          || die "Fix failed.";;
-    env_perms)         [[ -n "$SITE_APP_ROOT" ]] || die "This fix needs a site: server audit fix env_perms <site>"
-                       step "Securing .env permissions"      audit_fix_env_perms "$SITE_APP_ROOT" || die "Fix failed.";;
-    env_exposed)       [[ -n "$SITE_DOMAIN" ]] || die "This fix needs a site: server audit fix env_exposed <site>"
-                       step "Blocking dotfiles in nginx"     audit_fix_env_exposed "$SITE_DOMAIN" || die "Fix failed.";;
-    nginx_server_tokens) step "Hiding the nginx version"   audit_fix_nginx_tokens || die "Fix failed.";;
-    php_expose)        step "Disabling expose_php"          audit_fix_php_expose   || die "Fix failed.";;
-    https)             [[ -n "$SITE_DOMAIN" ]] || die "This fix needs a site: server audit fix https <site>"
-                       local email; email="$(global_get le_email)"; [[ -n "$email" ]] || email="$(ask_required "Let's Encrypt email")"
-                       step "Issuing HTTPS certificate"      nginx_enable_https "$SITE_DOMAIN" "$email" || die "Fix failed.";;
-    *) die "Unknown finding id '${id}'.";;
-  esac
+  _audit_apply_fix "$id" || die "Fix failed."
   ok "Applied fix for '${id}'. Re-run 'server audit' to confirm."
+}
+
+# _audit_apply_fix <id> — apply a single remediation (server already selected,
+# SITE_* loaded for site-scoped fixes). Returns non-zero on failure WITHOUT
+# exiting, so 'fixall' can keep going.
+_audit_apply_fix() {
+  local id="$1" email
+  case "$id" in
+    ssh_root_login)      step "Disabling root SSH login"    audit_fix_ssh_root_login;;
+    ssh_password_auth)   step "Disabling SSH password auth" audit_fix_ssh_password_auth;;
+    firewall)            step "Enabling the firewall (ufw)" audit_fix_firewall;;
+    fail2ban)            step "Installing fail2ban"         audit_fix_fail2ban;;
+    auto_updates)        step "Enabling automatic updates"  audit_fix_auto_updates;;
+    pending_updates)     step "Applying security updates"   audit_fix_updates;;
+    nginx_server_tokens) step "Hiding the nginx version"    audit_fix_nginx_tokens;;
+    php_expose)          step "Disabling expose_php"        audit_fix_php_expose;;
+    env_perms)   [[ -n "$SITE_APP_ROOT" ]] || { warn "env_perms needs a site"; return 1; }
+                 step "Securing .env permissions" audit_fix_env_perms "$SITE_APP_ROOT";;
+    env_exposed) [[ -n "$SITE_DOMAIN" ]] || { warn "env_exposed needs a site"; return 1; }
+                 step "Blocking dotfiles in nginx" audit_fix_env_exposed "$SITE_DOMAIN";;
+    https)       [[ -n "$SITE_DOMAIN" ]] || { warn "https needs a site"; return 1; }
+                 email="$(global_get le_email)"
+                 if [[ -z "$email" ]]; then
+                   [[ "${SRVMGR_ASSUME_YES:-0}" == "1" ]] && { warn "https fix skipped: no Let's Encrypt email set"; return 1; }
+                   email="$(ask_required "Let's Encrypt email")"
+                 fi
+                 step "Issuing HTTPS certificate" nginx_enable_https "$SITE_DOMAIN" "$email";;
+    *) warn "Unknown finding id '${id}'"; return 1;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
