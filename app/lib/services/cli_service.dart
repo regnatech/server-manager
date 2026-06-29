@@ -200,10 +200,18 @@ class LiveCliService implements CliService {
     return "'${arg.replaceAll("'", r"'\''")}'";
   }
 
-  /// Builds `server --json <args...>` with every argument quoted.
+  /// Builds `server --json <args...>` with every argument quoted, wrapped in a
+  /// login shell.
+  ///
+  /// A bare SSH exec channel (`ssh host 'cmd'`) does not source the user's
+  /// `~/.profile`, so its PATH is the minimal sshd default. The installer's
+  /// fallback location is `~/.local/bin`, which only lands on PATH via the
+  /// profile — so without a login shell a perfectly-installed `server` reads as
+  /// "command not found". `bash -lc` loads that PATH before running.
   static String buildCommand(List<String> args) {
-    final String quoted = args.map(shellQuote).join(' ');
-    return '$_bin --json $quoted';
+    final String inner =
+        <String>[_bin, '--json', ...args].map(shellQuote).join(' ');
+    return 'bash -lc ${shellQuote(inner)}';
   }
 
   Stream<CliEvent> _stream(List<String> args) {
@@ -212,10 +220,20 @@ class LiveCliService implements CliService {
 
   @override
   Future<VersionEvent> version() async {
+    // Collect any stray (non-JSON) shell output so a failed handshake can
+    // report what actually went wrong — typically `bash: server: command not
+    // found` when the CLI isn't installed (or isn't on the login PATH).
+    final List<String> noise = <String>[];
     await for (final CliEvent e in _stream(<String>['version'])) {
       if (e is VersionEvent) return e;
+      if (e is LogEvent && e.msg.trim().isNotEmpty) noise.add(e.msg.trim());
     }
-    throw const CliException('No version event returned by control node.');
+    final String hint = noise.isEmpty
+        ? 'Is the `server` CLI installed on the control node? Install it with: '
+            'git clone https://github.com/regnatech/server-manager && '
+            'cd server-manager && ./install.sh /usr/local/bin'
+        : noise.join('\n');
+    throw CliException('No version event returned by control node.\n$hint');
   }
 
   @override
