@@ -135,6 +135,16 @@ abstract class CliService {
   /// `server --json notify off` → clears all destinations, then a [DoneEvent].
   Stream<CliEvent> notifyOff();
 
+  /// `server --json config list` → emits a `kind:"config"` [DataEvent] whose
+  /// items are `{key, label, section, type:"string|secret", set:bool, value?}`
+  /// (secrets report `set` but never carry their `value`) then a [DoneEvent].
+  Stream<CliEvent> configList();
+
+  /// `server --json config set <key> <value>` → emits a `kind:"config_set"`
+  /// [DataEvent] (`value:{key}`) then a [DoneEvent]. Secrets are passed straight
+  /// through and never persisted in the app.
+  Stream<CliEvent> configSet(String key, String value);
+
   /// `server --json uptime --all` → emits an `uptime` [DataEvent] (items:
   /// `{domain, url, up, code, ms}`) then a [DoneEvent].
   Stream<CliEvent> uptimeAll();
@@ -353,6 +363,13 @@ class LiveCliService implements CliService {
 
   @override
   Stream<CliEvent> notifyOff() => _stream(<String>['notify', 'off']);
+
+  @override
+  Stream<CliEvent> configList() => _stream(<String>['config', 'list']);
+
+  @override
+  Stream<CliEvent> configSet(String key, String value) =>
+      _stream(<String>['config', 'set', key, value]);
 
   @override
   Stream<CliEvent> uptimeAll() => _stream(<String>['uptime', '--all']);

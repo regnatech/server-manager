@@ -913,6 +913,32 @@ class DemoCliService implements CliService {
   static bool _slackConfigured = false;
   static bool _telegramConfigured = false;
 
+  /// Generic settings backend (`config list` / `config set`) demo store, keyed
+  /// by config key. Seeded with a couple of plausible values so an
+  /// SM_ROUTE=/settings screenshot shows populated sections; mutated by
+  /// [configSet] so a subsequent [configList] reflects the change. Secrets are
+  /// stored here in the demo only — the contract never echoes them back.
+  static final Map<String, String> _config = <String, String>{
+    'git_default_base': 'main',
+    'git_author_name': 'Dana Ortiz',
+  };
+
+  /// The static `config list` schema: ordered (key, label, section, type) rows
+  /// matching the generic settings backend. Values/`set` are derived from
+  /// [_config] at list time.
+  static const List<(String, String, String, String)> _configSchema =
+      <(String, String, String, String)>[
+    ('le_email', "Let's Encrypt email", 'general', 'string'),
+    ('default_server', 'Default server', 'general', 'string'),
+    ('git_author_name', 'Git author name', 'git', 'string'),
+    ('git_author_email', 'Git author email', 'git', 'string'),
+    ('github_token', 'GitHub token', 'git', 'secret'),
+    ('git_default_base', 'Default base branch', 'git', 'string'),
+    ('notify_slack_url', 'Slack webhook URL', 'notifications', 'string'),
+    ('notify_telegram_token', 'Telegram bot token', 'notifications', 'secret'),
+    ('notify_telegram_chat', 'Telegram chat id', 'notifications', 'string'),
+  ];
+
   /// Per-domain atomic-release timestamps (newest first), so a demo
   /// `release deploy` / `release rollback` visibly mutates a subsequent
   /// `release list`. Seeded lazily from [DemoData.releaseTimestamps].
@@ -1450,6 +1476,47 @@ class DemoCliService implements CliService {
     _slackConfigured = false;
     _telegramConfigured = false;
     await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> configList() async* {
+    await Future<void>.delayed(_shortGap);
+    // Keep the notifications section in sync with the demo notify state so the
+    // two views agree where it's trivial.
+    final String slack = (_config['notify_slack_url'] ?? '').isNotEmpty
+        ? _config['notify_slack_url']!
+        : (_slackConfigured ? 'https://hooks.slack.com/services/T000/B000/x' : '');
+    final List<Map<String, dynamic>> items = <Map<String, dynamic>>[
+      for (final (String, String, String, String) f in _configSchema)
+        () {
+          final String key = f.$1;
+          final bool secret = f.$4 == 'secret';
+          final String stored = key == 'notify_slack_url' ? slack : (_config[key] ?? '');
+          final bool set = stored.isNotEmpty;
+          return <String, dynamic>{
+            'key': key,
+            'label': f.$2,
+            'section': f.$3,
+            'type': f.$4,
+            'set': set,
+            // Secrets never echo their value; non-secrets always carry one.
+            if (!secret) 'value': stored,
+          };
+        }(),
+    ];
+    yield DataEvent(kind: 'config', items: items);
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> configSet(String key, String value) async* {
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    _config[key] = value;
+    // Mirror notification settings into the legacy notify state where trivial.
+    if (key == 'notify_slack_url') _slackConfigured = value.isNotEmpty;
+    if (key == 'notify_telegram_token') _telegramConfigured = value.isNotEmpty;
+    yield DataEvent(kind: 'config_set', value: <String, dynamic>{'key': key});
     yield const DoneEvent(ok: true);
   }
 
