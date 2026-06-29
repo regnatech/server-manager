@@ -13,6 +13,7 @@ import '../state/connection_provider.dart';
 import '../state/deploy_provider.dart';
 import '../state/sites_provider.dart';
 import '../theme/app_theme.dart';
+import '../theme/breakpoints.dart';
 import '../transport/cli_event.dart';
 import '../transport/platform.dart';
 import '../widgets/app_button.dart';
@@ -48,6 +49,13 @@ const List<_Tool> _tools = <_Tool>[
   _Tool('audit', 'Audit', Icons.shield_outlined),
 ];
 
+/// A dialog content width that never exceeds the screen on a phone: the
+/// preferred [preferred] width, clamped to the available width minus margins.
+double _dialogWidth(BuildContext context, double preferred) {
+  final double avail = MediaQuery.sizeOf(context).width - 2 * Insets.lg;
+  return avail < preferred ? avail : preferred;
+}
+
 /// Single-screen management view for a site: every tool selectable at the top,
 /// and an always-connected per-site shell pinned to the bottom.
 ///
@@ -81,10 +89,78 @@ class _SiteDetailScreenState extends ConsumerState<SiteDetailScreen> {
   /// Switches to the Deploy tool (used by the always-visible quick action).
   void _goDeploy() => _select(_tools.indexWhere((_Tool t) => t.key == 'deploy'));
 
+  /// Opens the per-site shell full-screen (phone), where the desktop's pinned
+  /// bottom split is dropped to give the selected tool the full height.
+  void _openShell(Site? site) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (BuildContext context) => Scaffold(
+          appBar: AppBar(
+            title: const Text('Shell'),
+            leading: IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          body: ColoredBox(
+            color: Palette.darkBg,
+            child: TerminalPanel(
+              shellProvider: siteShellProvider(widget.domain),
+              title: 'Shell — ${site?.server ?? widget.domain}'
+                  ':${siteAppRoot(widget.domain)}',
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The tool content stack — shared by both layouts.
+  Widget _toolContent(Site? site) {
+    return IndexedStack(
+      index: _selectedTool,
+      children: <Widget>[
+        _OverviewTab(site: site, domain: widget.domain),
+        _DeployTab(domain: widget.domain),
+        _ReleasesTab(domain: widget.domain),
+        _GitTab(domain: widget.domain),
+        _DataListTab(
+          domain: widget.domain,
+          kind: 'cron',
+          emptyLabel: 'No scheduled tasks',
+          builder: (CliService c) => c.cronList(widget.domain),
+          columns: const <String>['schedule', 'command', 'last', 'status'],
+        ),
+        _DataListTab(
+          domain: widget.domain,
+          kind: 'workers',
+          emptyLabel: 'No workers configured',
+          builder: (CliService c) => c.workersList(widget.domain),
+          columns: const <String>['name', 'procs', 'status'],
+        ),
+        _LogsTab(domain: widget.domain),
+        _SslTab(domain: widget.domain),
+        _DatabaseTab(site: site, domain: widget.domain),
+        _AuditTab(domain: widget.domain),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Site? site = ref.watch(siteByDomainProvider(widget.domain));
+    final bool phone = context.isPhone;
+
+    final Widget top = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _SiteSummaryStrip(site: site, onDeploy: _goDeploy),
+        _ToolBar(selected: _selectedTool, onSelect: _select),
+        Expanded(child: _toolContent(site)),
+      ],
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -96,97 +172,68 @@ class _SiteDetailScreenState extends ConsumerState<SiteDetailScreen> {
           children: <Widget>[
             if (site != null) StatusDot(health: site.health),
             const SizedBox(width: Insets.sm),
-            Hero(
-              tag: 'site-title-${widget.domain}',
-              child: Material(
-                type: MaterialType.transparency,
-                child: Text(widget.domain),
+            Flexible(
+              child: Hero(
+                tag: 'site-title-${widget.domain}',
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: Text(
+                    widget.domain,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ),
             ),
-            if (site != null) ...<Widget>[
+            if (site != null && !phone) ...<Widget>[
               const SizedBox(width: Insets.md),
               FrameworkChip(framework: site.framework),
             ],
           ],
         ),
       ),
-      body: Column(
-        children: <Widget>[
-          // TOP: tools + selected tool content.
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+      // Phone: the selected tool fills the screen; the shell is reachable via
+      // a floating button (opens full-screen) instead of an always-pinned
+      // split. Desktop/tablet keep the original tool-over-shell split.
+      floatingActionButton: phone
+          ? FloatingActionButton(
+              tooltip: 'Open shell',
+              onPressed: () => _openShell(site),
+              child: const Icon(Icons.terminal),
+            )
+          : null,
+      body: phone
+          ? top
+          : Column(
               children: <Widget>[
-                _SiteSummaryStrip(
-                  site: site,
-                  onDeploy: _goDeploy,
+                // TOP: tools + selected tool content.
+                Expanded(flex: 3, child: top),
+                // Splitter.
+                Container(
+                  height: 1,
+                  color: theme.colorScheme.outline.withValues(alpha: 0.6),
                 ),
-                _ToolBar(
-                  selected: _selectedTool,
-                  onSelect: _select,
-                ),
+                // BOTTOM: always-on per-site shell.
                 Expanded(
-                  child: IndexedStack(
-                    index: _selectedTool,
-                    children: <Widget>[
-                      _OverviewTab(site: site, domain: widget.domain),
-                      _DeployTab(domain: widget.domain),
-                      _ReleasesTab(domain: widget.domain),
-                      _GitTab(domain: widget.domain),
-                      _DataListTab(
-                        domain: widget.domain,
-                        kind: 'cron',
-                        emptyLabel: 'No scheduled tasks',
-                        builder: (CliService c) => c.cronList(widget.domain),
-                        columns: const <String>[
-                          'schedule', 'command', 'last', 'status'
-                        ],
+                  flex: 2,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 200),
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(Insets.radiusMd),
                       ),
-                      _DataListTab(
-                        domain: widget.domain,
-                        kind: 'workers',
-                        emptyLabel: 'No workers configured',
-                        builder: (CliService c) => c.workersList(widget.domain),
-                        columns: const <String>['name', 'procs', 'status'],
+                      child: ColoredBox(
+                        color: Palette.darkBg,
+                        child: TerminalPanel(
+                          shellProvider: siteShellProvider(widget.domain),
+                          title: 'Shell — ${site?.server ?? widget.domain}'
+                              ':${siteAppRoot(widget.domain)}',
+                        ),
                       ),
-                      _LogsTab(domain: widget.domain),
-                      _SslTab(domain: widget.domain),
-                      _DatabaseTab(site: site, domain: widget.domain),
-                      _AuditTab(domain: widget.domain),
-                    ],
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
-          // Splitter.
-          Container(
-            height: 1,
-            color: theme.colorScheme.outline.withValues(alpha: 0.6),
-          ),
-          // BOTTOM: always-on per-site shell.
-          Expanded(
-            flex: 2,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 200),
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(Insets.radiusMd),
-                ),
-                child: ColoredBox(
-                  color: Palette.darkBg,
-                  child: TerminalPanel(
-                    shellProvider: siteShellProvider(widget.domain),
-                    title: 'Shell — ${site?.server ?? widget.domain}'
-                        ':${siteAppRoot(widget.domain)}',
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -509,40 +556,89 @@ class _DeployTab extends ConsumerWidget {
             Insets.lg,
             0,
           ),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: SectionHeader(
-                  title: 'Deploy',
-                  subtitle: state.running
-                      ? 'Streaming live from the control node…'
-                      : 'Run an update and watch each step in real time',
-                ),
-              ),
-              AppButton(
-                label: 'Preview changes',
-                icon: Icons.difference_outlined,
-                tonal: true,
-                onPressed: state.running ? null : previewChanges,
-              ),
-              const SizedBox(width: Insets.sm),
-              AppButton(
-                label: 'Rollback',
-                icon: Icons.history,
-                tonal: true,
-                onPressed: state.running ? null : startRollback,
-              ),
-              const SizedBox(width: Insets.sm),
-              AppButton(
-                label: 'Deploy',
-                icon: Icons.rocket_launch,
-                loading: state.running,
-                onPressed: state.running ? null : startDeploy,
-              ),
-            ],
+          child: _DeployHeader(
+            running: state.running,
+            onPreview: state.running ? null : previewChanges,
+            onRollback: state.running ? null : startRollback,
+            onDeploy: state.running ? null : startDeploy,
           ),
         ),
         Expanded(child: DeployTimeline(state: state)),
+      ],
+    );
+  }
+}
+
+/// The Deploy tool header: the section title plus Preview / Rollback / Deploy.
+/// On phone the buttons wrap below the title and Deploy goes full-width so the
+/// primary action stays prominent.
+class _DeployHeader extends StatelessWidget {
+  const _DeployHeader({
+    required this.running,
+    required this.onPreview,
+    required this.onRollback,
+    required this.onDeploy,
+  });
+
+  final bool running;
+  final VoidCallback? onPreview;
+  final VoidCallback? onRollback;
+  final VoidCallback? onDeploy;
+
+  @override
+  Widget build(BuildContext context) {
+    final SectionHeader header = SectionHeader(
+      title: 'Deploy',
+      subtitle: running
+          ? 'Streaming live from the control node…'
+          : 'Run an update and watch each step in real time',
+    );
+    final AppButton preview = AppButton(
+      label: 'Preview changes',
+      icon: Icons.difference_outlined,
+      tonal: true,
+      onPressed: onPreview,
+    );
+    final AppButton rollback = AppButton(
+      label: 'Rollback',
+      icon: Icons.history,
+      tonal: true,
+      onPressed: onRollback,
+    );
+    final AppButton deploy = AppButton(
+      label: 'Deploy',
+      icon: Icons.rocket_launch,
+      loading: running,
+      onPressed: onDeploy,
+    );
+
+    if (context.isPhone) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          header,
+          const SizedBox(height: Insets.sm),
+          Row(
+            children: <Widget>[
+              Expanded(child: preview),
+              const SizedBox(width: Insets.sm),
+              Expanded(child: rollback),
+            ],
+          ),
+          const SizedBox(height: Insets.sm),
+          SizedBox(width: double.infinity, child: deploy),
+        ],
+      );
+    }
+
+    return Row(
+      children: <Widget>[
+        Expanded(child: header),
+        preview,
+        const SizedBox(width: Insets.sm),
+        rollback,
+        const SizedBox(width: Insets.sm),
+        deploy,
       ],
     );
   }
@@ -869,7 +965,7 @@ class _DiffDialogState extends ConsumerState<_DiffDialog> {
         ],
       ),
       content: SizedBox(
-        width: 480,
+        width: _dialogWidth(context, 480),
         child: _loading
             ? const SizedBox(
                 height: 120,
@@ -2204,6 +2300,90 @@ class _GitHeader extends StatelessWidget {
     final bool nonCurrentSelected =
         selectedBranch != null && selectedBranch != currentBranch;
 
+    final bool phone = context.isPhone;
+
+    final Widget statusChips = Wrap(
+      spacing: Insets.sm,
+      runSpacing: Insets.sm,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: <Widget>[
+        _BranchDropdown(
+          branches: local,
+          value: selectedBranch,
+          onChanged: onSelectBranch,
+        ),
+        if (s != null) _AheadBehindChip(ahead: s.ahead, behind: s.behind),
+        if (s != null)
+          _CleanDirtyChip(
+            status: s,
+            expanded: dirtyExpanded,
+            onToggle: onToggleDirty,
+          ),
+      ],
+    );
+
+    final Widget actionsMenu = _GitActionsMenu(
+      onNewBranch: onNewBranch,
+      onNewTag: onNewTag,
+      onOpenPr: onOpenPr,
+      onMerge: onMerge,
+    );
+    final AppButton? deployBranchBtn = nonCurrentSelected
+        ? AppButton(
+            label: 'Deploy this branch',
+            icon: Icons.alt_route,
+            tonal: true,
+            loading: running,
+            onPressed: onDeployBranch,
+          )
+        : null;
+    final AppButton pushDeployBtn = AppButton(
+      label: 'Push & Deploy',
+      icon: Icons.rocket_launch,
+      loading: running,
+      onPressed: onPushDeploy,
+    );
+
+    // Phone: stack the chips, then the secondary actions, then a full-width
+    // Push & Deploy so the headline action stays prominent. Desktop keeps the
+    // single-row split (chips on the left, actions on the right).
+    final Widget header = phone
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              statusChips,
+              const SizedBox(height: Insets.sm),
+              Row(
+                children: <Widget>[
+                  actionsMenu,
+                  if (deployBranchBtn != null) ...<Widget>[
+                    const SizedBox(width: Insets.sm),
+                    Expanded(child: deployBranchBtn),
+                  ],
+                ],
+              ),
+              const SizedBox(height: Insets.sm),
+              SizedBox(width: double.infinity, child: pushDeployBtn),
+            ],
+          )
+        : Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Expanded(child: statusChips),
+              const SizedBox(width: Insets.sm),
+              Wrap(
+                spacing: Insets.sm,
+                runSpacing: Insets.sm,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: <Widget>[
+                  actionsMenu,
+                  if (deployBranchBtn != null) deployBranchBtn,
+                  pushDeployBtn,
+                ],
+              ),
+            ],
+          );
+
     return Container(
       padding: const EdgeInsets.fromLTRB(Insets.lg, Insets.lg, Insets.lg, Insets.md),
       decoration: BoxDecoration(
@@ -2217,61 +2397,7 @@ class _GitHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              Expanded(
-                child: Wrap(
-                  spacing: Insets.sm,
-                  runSpacing: Insets.sm,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: <Widget>[
-                    _BranchDropdown(
-                      branches: local,
-                      value: selectedBranch,
-                      onChanged: onSelectBranch,
-                    ),
-                    if (s != null)
-                      _AheadBehindChip(ahead: s.ahead, behind: s.behind),
-                    if (s != null)
-                      _CleanDirtyChip(
-                        status: s,
-                        expanded: dirtyExpanded,
-                        onToggle: onToggleDirty,
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: Insets.sm),
-              Wrap(
-                spacing: Insets.sm,
-                runSpacing: Insets.sm,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: <Widget>[
-                  _GitActionsMenu(
-                    onNewBranch: onNewBranch,
-                    onNewTag: onNewTag,
-                    onOpenPr: onOpenPr,
-                    onMerge: onMerge,
-                  ),
-                  if (nonCurrentSelected)
-                    AppButton(
-                      label: 'Deploy this branch',
-                      icon: Icons.alt_route,
-                      tonal: true,
-                      loading: running,
-                      onPressed: onDeployBranch,
-                    ),
-                  AppButton(
-                    label: 'Push & Deploy',
-                    icon: Icons.rocket_launch,
-                    loading: running,
-                    onPressed: onPushDeploy,
-                  ),
-                ],
-              ),
-            ],
-          ),
+          header,
           if (s != null && !s.clean && dirtyExpanded) ...<Widget>[
             const SizedBox(height: Insets.sm),
             _DirtyFileList(files: s.dirty),
@@ -2512,6 +2638,10 @@ class _CommitRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final bool phone = context.isPhone;
+    final TextStyle? metaStyle = theme.textTheme.labelSmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2557,15 +2687,24 @@ class _CommitRow extends StatelessWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(width: Insets.sm),
-                      Text(
-                        '${commit.author} · ${commit.relative}',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
+                      // Wide: author·date inline on the right. Phone: it would
+                      // overflow, so it moves below the subject (see next line).
+                      if (!phone) ...<Widget>[
+                        const SizedBox(width: Insets.sm),
+                        Text('${commit.author} · ${commit.relative}',
+                            style: metaStyle),
+                      ],
                     ],
                   ),
+                  if (phone) ...<Widget>[
+                    const SizedBox(height: 2),
+                    Text(
+                      '${commit.author} · ${commit.relative}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: metaStyle,
+                    ),
+                  ],
                   if (commit.refs.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 6),
                     Wrap(
@@ -3116,7 +3255,7 @@ class _PrDialogState extends ConsumerState<_PrDialog> {
         ],
       ),
       content: SizedBox(
-        width: 420,
+        width: _dialogWidth(context, 420),
         child: _result != null
             ? _PrSuccess(pr: _result!)
             : _failed

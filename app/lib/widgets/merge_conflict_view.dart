@@ -17,6 +17,7 @@ import '../models/git_models.dart';
 import '../services/cli_service.dart';
 import '../state/connection_provider.dart';
 import '../theme/app_theme.dart';
+import '../theme/breakpoints.dart';
 import '../transport/cli_event.dart';
 import 'app_button.dart';
 import 'section_header.dart';
@@ -181,15 +182,16 @@ class _MergeConflictViewState extends ConsumerState<MergeConflictView> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final bool compact = context.isCompact;
     return Dialog(
-      insetPadding: const EdgeInsets.all(Insets.lg),
+      insetPadding: EdgeInsets.all(compact ? Insets.sm : Insets.lg),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(Insets.radiusLg),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 1100, maxHeight: 760),
         child: Padding(
-          padding: const EdgeInsets.all(Insets.lg),
+          padding: EdgeInsets.all(compact ? Insets.md : Insets.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
@@ -205,30 +207,117 @@ class _MergeConflictViewState extends ConsumerState<MergeConflictView> {
               ),
               const SizedBox(height: Insets.md),
               Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    SizedBox(
-                      width: 240,
-                      child: _ConflictList(
-                        conflicts: widget.conflicts,
-                        selected: _selected,
-                        resolved: _resolved,
-                        onSelect: _busy
-                            ? null
-                            : (int i) => setState(() => _selected = i),
-                      ),
-                    ),
-                    const SizedBox(width: Insets.md),
-                    Expanded(child: _editorArea(theme)),
-                  ],
-                ),
+                child: compact ? _compactBody() : _wideBody(theme),
               ),
               const SizedBox(height: Insets.md),
               _footer(theme),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// Desktop layout: file list on the left, the 3-panel editor on the right.
+  Widget _wideBody(ThemeData theme) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        SizedBox(
+          width: 240,
+          child: _ConflictList(
+            conflicts: widget.conflicts,
+            selected: _selected,
+            resolved: _resolved,
+            onSelect:
+                _busy ? null : (int i) => setState(() => _selected = i),
+          ),
+        ),
+        const SizedBox(width: Insets.md),
+        Expanded(child: _editorArea(theme)),
+      ],
+    );
+  }
+
+  /// Phone / narrow layout: a file dropdown on top, then a Ours·Theirs·
+  /// Resolution TabBar showing one full-width editor at a time.
+  Widget _compactBody() {
+    final GitConflict c = _current;
+    final bool resolved = _resolved.contains(c.path);
+    return DefaultTabController(
+      // Start on the editable Resolution tab so the action is one step away.
+      initialIndex: 2,
+      length: 3,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _ConflictDropdown(
+            conflicts: widget.conflicts,
+            selected: _selected,
+            resolved: _resolved,
+            onSelect:
+                _busy ? null : (int i) => setState(() => _selected = i),
+          ),
+          const SizedBox(height: Insets.sm),
+          Wrap(
+            spacing: Insets.sm,
+            children: <Widget>[
+              TextButton.icon(
+                onPressed:
+                    _busy ? null : () => _resolution[c.path]!.text = c.ours,
+                icon: const Icon(Icons.arrow_back, size: 15),
+                label: const Text('Use ours'),
+              ),
+              TextButton.icon(
+                onPressed:
+                    _busy ? null : () => _resolution[c.path]!.text = c.theirs,
+                icon: const Icon(Icons.arrow_forward, size: 15),
+                label: const Text('Use theirs'),
+              ),
+            ],
+          ),
+          const SizedBox(height: Insets.sm),
+          const TabBar(
+            tabs: <Widget>[
+              Tab(text: 'Ours'),
+              Tab(text: 'Theirs'),
+              Tab(text: 'Resolution'),
+            ],
+          ),
+          const SizedBox(height: Insets.sm),
+          Expanded(
+            child: TabBarView(
+              children: <Widget>[
+                _EditorPanel(
+                  label: 'Ours (current)',
+                  controller: _ours[c.path]!,
+                  readOnly: true,
+                ),
+                _EditorPanel(
+                  label: 'Theirs (${widget.branch})',
+                  controller: _theirs[c.path]!,
+                  readOnly: true,
+                ),
+                _EditorPanel(
+                  label: resolved ? 'Resolution (resolved)' : 'Resolution',
+                  controller: _resolution[c.path]!,
+                  readOnly: _busy || resolved,
+                  accent: resolved ? Palette.ok : Palette.violet,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: Insets.sm),
+          SizedBox(
+            width: double.infinity,
+            child: AppButton(
+              label: resolved ? 'Resolved' : 'Mark resolved',
+              icon: resolved ? Icons.check : Icons.done_all,
+              loading: _busy && _progressLabel != null,
+              onPressed: (_busy || resolved) ? null : _markResolved,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -314,38 +403,122 @@ class _MergeConflictViewState extends ConsumerState<MergeConflictView> {
     );
   }
 
+  /// The bottom action bar. Wraps so "Abort" / "Complete merge" stay reachable
+  /// on a phone where they don't fit on one line.
   Widget _footer(ThemeData theme) {
-    return Row(
+    final List<Widget> actions = <Widget>[
+      AppButton(
+        label: 'Abort merge',
+        icon: Icons.cancel_outlined,
+        tonal: true,
+        onPressed: _busy ? null : _abort,
+      ),
+      AppButton(
+        label: 'Complete merge',
+        icon: Icons.merge,
+        loading: _busy,
+        onPressed: (_busy || !_allResolved) ? null : _complete,
+      ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         if (_busy && _progressLabel != null) ...<Widget>[
-          const SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(strokeWidth: 2),
+          Row(
+            children: <Widget>[
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: Insets.sm),
+              Expanded(
+                child: Text(
+                  '$_progressLabel…',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: Insets.sm),
-          Text(
-            '$_progressLabel…',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
+          const SizedBox(height: Insets.sm),
         ],
-        const Spacer(),
-        AppButton(
-          label: 'Abort merge',
-          icon: Icons.cancel_outlined,
-          tonal: true,
-          onPressed: _busy ? null : _abort,
-        ),
-        const SizedBox(width: Insets.sm),
-        AppButton(
-          label: 'Complete merge',
-          icon: Icons.merge,
-          loading: _busy,
-          onPressed: (_busy || !_allResolved) ? null : _complete,
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: Insets.sm,
+          runSpacing: Insets.sm,
+          children: actions,
         ),
       ],
+    );
+  }
+}
+
+/// A compact file picker used on narrow screens instead of the left column.
+class _ConflictDropdown extends StatelessWidget {
+  const _ConflictDropdown({
+    required this.conflicts,
+    required this.selected,
+    required this.resolved,
+    required this.onSelect,
+  });
+
+  final List<GitConflict> conflicts;
+  final int selected;
+  final Set<String> resolved;
+  final ValueChanged<int>? onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: Insets.md),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(Insets.radiusMd),
+        border:
+            Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.6)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: selected,
+          isExpanded: true,
+          borderRadius: BorderRadius.circular(Insets.radiusMd),
+          onChanged: onSelect == null
+              ? null
+              : (int? i) {
+                  if (i != null) onSelect!(i);
+                },
+          items: <DropdownMenuItem<int>>[
+            for (int i = 0; i < conflicts.length; i++)
+              DropdownMenuItem<int>(
+                value: i,
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      resolved.contains(conflicts[i].path)
+                          ? Icons.check_circle
+                          : Icons.warning_amber_rounded,
+                      size: 16,
+                      color: resolved.contains(conflicts[i].path)
+                          ? Palette.ok
+                          : Palette.warn,
+                    ),
+                    const SizedBox(width: Insets.sm),
+                    Expanded(
+                      child: Text(
+                        conflicts[i].path.split('/').last,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

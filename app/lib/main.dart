@@ -14,9 +14,13 @@ Future<void> main() async {
   // Desktop window setup. Skipped on web (kIsWeb) and non-desktop platforms.
   if (!kIsWeb && isDesktop) {
     await windowManager.ensureInitialized();
-    const WindowOptions windowOptions = WindowOptions(
-      size: Size(1200, 800),
-      minimumSize: Size(960, 640),
+    // SM_WIN_W/SM_WIN_H let the screenshot tooling force a phone-width window so
+    // the responsive (isPhone) layouts can be captured on desktop.
+    final double winW = double.tryParse(envVar('SM_WIN_W') ?? '') ?? 1200;
+    final double winH = double.tryParse(envVar('SM_WIN_H') ?? '') ?? 800;
+    final WindowOptions windowOptions = WindowOptions(
+      size: Size(winW, winH),
+      minimumSize: const Size(360, 600),
       center: true,
       backgroundColor: Colors.transparent,
       titleBarStyle: TitleBarStyle.normal,

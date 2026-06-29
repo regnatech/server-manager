@@ -8,6 +8,7 @@ import '../services/cli_service.dart';
 import '../state/connection_provider.dart';
 import '../state/sites_provider.dart';
 import '../theme/app_theme.dart';
+import '../theme/breakpoints.dart';
 import '../transport/cli_event.dart';
 import '../widgets/app_button.dart';
 import '../widgets/framework_chip.dart';
@@ -60,11 +61,18 @@ class DashboardScreen extends ConsumerWidget {
     final bool demo = ref.watch(demoModeProvider);
     final String? version = ref.watch(connectionProvider).version;
 
+    final bool phone = context.isPhone;
+
+    Future<void> disconnect() async {
+      await ref.read(connectionProvider.notifier).disconnect();
+      if (context.mounted) context.go('/connect');
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sites'),
         actions: <Widget>[
-          if (version != null)
+          if (version != null && !phone)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: Insets.sm),
               child: Center(
@@ -74,45 +82,129 @@ class DashboardScreen extends ConsumerWidget {
                 ),
               ),
             ),
-          IconButton(
-            tooltip: 'Deploy all sites',
-            icon: const Icon(Icons.rocket_launch),
-            onPressed: () => _confirmDeployAll(context, ref),
-          ),
-          IconButton(
-            tooltip: 'Server health',
-            icon: const Icon(Icons.monitor_heart_outlined),
-            onPressed: () => context.go('/health'),
-          ),
-          IconButton(
-            tooltip: 'Security audit',
-            icon: const Icon(Icons.shield_outlined),
-            onPressed: () => context.go('/audit'),
-          ),
-          IconButton(
-            tooltip: 'Terminal',
-            icon: const Icon(Icons.terminal),
-            onPressed: () => context.go('/terminal'),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => context.go('/settings'),
-          ),
-          IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh),
-            onPressed: () => ref.invalidate(sitesProvider),
-          ),
-          IconButton(
-            tooltip: 'Disconnect',
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await ref.read(connectionProvider.notifier).disconnect();
-              if (context.mounted) context.go('/connect');
-            },
-          ),
-          const SizedBox(width: Insets.sm),
+          if (phone) ...<Widget>[
+            // Keep refresh handy; tuck the rest behind an overflow menu so the
+            // bar never overflows on a narrow screen.
+            IconButton(
+              tooltip: 'Refresh',
+              icon: const Icon(Icons.refresh),
+              onPressed: () => ref.invalidate(sitesProvider),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'More',
+              icon: const Icon(Icons.more_vert),
+              onSelected: (String v) {
+                switch (v) {
+                  case 'deploy':
+                    _confirmDeployAll(context, ref);
+                  case 'health':
+                    context.go('/health');
+                  case 'audit':
+                    context.go('/audit');
+                  case 'terminal':
+                    context.go('/terminal');
+                  case 'settings':
+                    context.go('/settings');
+                  case 'logout':
+                    disconnect();
+                }
+              },
+              itemBuilder: (BuildContext context) =>
+                  const <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(
+                  value: 'deploy',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.rocket_launch),
+                    title: Text('Deploy all sites'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'health',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.monitor_heart_outlined),
+                    title: Text('Server health'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'audit',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.shield_outlined),
+                    title: Text('Security audit'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'terminal',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.terminal),
+                    title: Text('Terminal'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'settings',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.settings_outlined),
+                    title: Text('Settings'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'logout',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.logout),
+                    title: Text('Disconnect'),
+                  ),
+                ),
+              ],
+            ),
+          ] else ...<Widget>[
+            IconButton(
+              tooltip: 'Deploy all sites',
+              icon: const Icon(Icons.rocket_launch),
+              onPressed: () => _confirmDeployAll(context, ref),
+            ),
+            IconButton(
+              tooltip: 'Server health',
+              icon: const Icon(Icons.monitor_heart_outlined),
+              onPressed: () => context.go('/health'),
+            ),
+            IconButton(
+              tooltip: 'Security audit',
+              icon: const Icon(Icons.shield_outlined),
+              onPressed: () => context.go('/audit'),
+            ),
+            IconButton(
+              tooltip: 'Terminal',
+              icon: const Icon(Icons.terminal),
+              onPressed: () => context.go('/terminal'),
+            ),
+            IconButton(
+              tooltip: 'Settings',
+              icon: const Icon(Icons.settings_outlined),
+              onPressed: () => context.go('/settings'),
+            ),
+            IconButton(
+              tooltip: 'Refresh',
+              icon: const Icon(Icons.refresh),
+              onPressed: () => ref.invalidate(sitesProvider),
+            ),
+            IconButton(
+              tooltip: 'Disconnect',
+              icon: const Icon(Icons.logout),
+              onPressed: disconnect,
+            ),
+            const SizedBox(width: Insets.sm),
+          ],
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -154,7 +246,12 @@ class _Grid extends StatelessWidget {
         const SizedBox(height: Insets.md),
         LayoutBuilder(
           builder: (BuildContext context, BoxConstraints c) {
-            final int cols = c.maxWidth ~/ 340 < 1 ? 1 : c.maxWidth ~/ 340;
+            // 1 column on phone, 2 on tablet, 3+ on desktop.
+            final int cols = c.maxWidth < Breakpoints.phone
+                ? 1
+                : c.maxWidth < Breakpoints.tablet
+                    ? 2
+                    : (c.maxWidth ~/ 340).clamp(3, 6);
             return GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -297,11 +394,17 @@ class _LoadingGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double w = context.width;
+    final int cols = w < Breakpoints.phone
+        ? 1
+        : w < Breakpoints.tablet
+            ? 2
+            : 3;
     return GridView.builder(
       padding: const EdgeInsets.all(Insets.lg),
       itemCount: 6,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: cols,
         mainAxisSpacing: Insets.md,
         crossAxisSpacing: Insets.md,
         mainAxisExtent: 168,
@@ -412,6 +515,8 @@ class _DeployAllDialogState extends ConsumerState<_DeployAllDialog> {
     final int deployed = (s?['deployed'] as num?)?.toInt() ?? 0;
     final int failed = (s?['failed'] as num?)?.toInt() ?? 0;
     final int total = (s?['total'] as num?)?.toInt() ?? 0;
+    final double availWidth = context.width - 2 * Insets.lg;
+    final double dialogWidth = availWidth < 460 ? availWidth : 460.0;
 
     return AlertDialog(
       shape: RoundedRectangleBorder(
@@ -432,7 +537,7 @@ class _DeployAllDialogState extends ConsumerState<_DeployAllDialog> {
         ],
       ),
       content: SizedBox(
-        width: 460,
+        width: dialogWidth,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,

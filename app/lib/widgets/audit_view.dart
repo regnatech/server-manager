@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/audit_finding.dart';
 import '../theme/app_theme.dart';
+import '../theme/breakpoints.dart';
 import '../transport/cli_event.dart';
 import 'app_button.dart';
 import 'glass_card.dart';
@@ -350,75 +351,88 @@ class _AuditHeader extends StatelessWidget {
     const List<String> order = <String>[
       'critical', 'high', 'medium', 'low', 'info'
     ];
+    final bool phone = context.isPhone;
+
+    final Widget titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        SectionHeader(title: 'Security audit', subtitle: posture),
+        if (counts.isNotEmpty) ...<Widget>[
+          const SizedBox(height: Insets.xs),
+          Wrap(
+            spacing: Insets.sm,
+            runSpacing: Insets.xs,
+            children: <Widget>[
+              for (final String sev in order)
+                if ((counts[sev] ?? 0) > 0)
+                  _SeverityChip(severity: sev, count: counts[sev]!),
+            ],
+          ),
+        ],
+      ],
+    );
+
+    final Widget actions = Column(
+      crossAxisAlignment:
+          phone ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Wrap(
+          spacing: Insets.sm,
+          runSpacing: Insets.sm,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            if (onHistory != null)
+              IconButton(
+                tooltip: 'Posture history',
+                icon: const Icon(Icons.history_toggle_off),
+                onPressed: onHistory,
+              ),
+            if (showFixAll)
+              AppButton(
+                label: 'Fix all',
+                icon: Icons.auto_fix_high,
+                loading: fixingAll,
+                onPressed: (fixingAll || running) ? null : onFixAll,
+              ),
+            AppButton(
+              label: 'Re-run audit',
+              icon: Icons.refresh,
+              tonal: true,
+              loading: running,
+              onPressed: fixingAll ? null : onRerun,
+            ),
+          ],
+        ),
+        if (fixingAll && fixAllStatus.isNotEmpty) ...<Widget>[
+          const SizedBox(height: Insets.xs),
+          Text(
+            fixAllStatus,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+          ),
+        ],
+      ],
+    );
+
+    if (phone) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          titleBlock,
+          const SizedBox(height: Insets.sm),
+          actions,
+        ],
+      );
+    }
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: <Widget>[
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              SectionHeader(title: 'Security audit', subtitle: posture),
-              if (counts.isNotEmpty) ...<Widget>[
-                const SizedBox(height: Insets.xs),
-                Wrap(
-                  spacing: Insets.sm,
-                  runSpacing: Insets.xs,
-                  children: <Widget>[
-                    for (final String sev in order)
-                      if ((counts[sev] ?? 0) > 0)
-                        _SeverityChip(severity: sev, count: counts[sev]!),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
+        Expanded(child: titleBlock),
         const SizedBox(width: Insets.sm),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (onHistory != null) ...<Widget>[
-                  IconButton(
-                    tooltip: 'Posture history',
-                    icon: const Icon(Icons.history_toggle_off),
-                    onPressed: onHistory,
-                  ),
-                  const SizedBox(width: Insets.xs),
-                ],
-                if (showFixAll) ...<Widget>[
-                  AppButton(
-                    label: 'Fix all',
-                    icon: Icons.auto_fix_high,
-                    loading: fixingAll,
-                    onPressed: (fixingAll || running) ? null : onFixAll,
-                  ),
-                  const SizedBox(width: Insets.sm),
-                ],
-                AppButton(
-                  label: 'Re-run audit',
-                  icon: Icons.refresh,
-                  tonal: true,
-                  loading: running,
-                  onPressed: fixingAll ? null : onRerun,
-                ),
-              ],
-            ),
-            if (fixingAll && fixAllStatus.isNotEmpty) ...<Widget>[
-              const SizedBox(height: Insets.xs),
-              Text(
-                fixAllStatus,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-              ),
-            ],
-          ],
-        ),
+        actions,
       ],
     );
   }
@@ -731,7 +745,9 @@ class _AuditHistoryDialog extends StatelessWidget {
         ],
       ),
       content: SizedBox(
-        width: 460,
+        width: context.width - 2 * Insets.lg < 460
+            ? context.width - 2 * Insets.lg
+            : 460,
         child: snapshots.isEmpty
             ? const Text('No history available.')
             : SingleChildScrollView(

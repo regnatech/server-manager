@@ -155,9 +155,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     if (cards.isNotEmpty) cards.removeLast(); // trailing spacer
 
-    return ListView(
-      padding: const EdgeInsets.all(Insets.lg),
-      children: cards,
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: ListView(
+          padding: const EdgeInsets.all(Insets.lg),
+          children: cards,
+        ),
+      ),
     );
   }
 }
@@ -351,10 +356,13 @@ class _FieldRowState extends State<_FieldRow> {
       children: <Widget>[
         Row(
           children: <Widget>[
-            Text(
-              f.label,
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
+            Flexible(
+              child: Text(
+                f.label,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w700),
+              ),
             ),
             if (f.secret) ...<Widget>[
               const SizedBox(width: Insets.sm),
