@@ -30,6 +30,7 @@ source "$ROOT/lib/providers/workers.sh"
 source "$ROOT/lib/providers/toolchain.sh"
 source "$ROOT/lib/commands/update.sh"
 source "$ROOT/lib/commands/audit.sh"
+source "$ROOT/lib/commands/metrics.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -239,6 +240,7 @@ CUR=fix_envperm; audit_fix_env_perms /a >/dev/null 2>&1 || true
 CUR=fix_envexp;  audit_fix_env_exposed example.com >/dev/null 2>&1 || true
 CUR=fix_tokens;  audit_fix_nginx_tokens >/dev/null 2>&1 || true
 CUR=fix_expose;  audit_fix_php_expose >/dev/null 2>&1 || true
+CUR=metrics;     _metrics_gather >/dev/null 2>&1 || true
 if [[ $LINTFAIL -eq 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); fi
 
 # ---------------------------------------------------------------------------
@@ -398,6 +400,17 @@ t_eq "php expose On"  "$(_audit_eval_php_expose 'expose_php => On => On')"  "on"
 t_eq "php expose Off" "$(_audit_eval_php_expose 'expose_php => Off => Off')" "off"
 OPENSS="$(printf 'LISTEN 0 128 0.0.0.0:3306 0.0.0.0:*\nLISTEN 0 128 127.0.0.1:6379 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:80 0.0.0.0:*\nLISTEN 0 128 [::]:443 [::]:*\n')"
 t_eq "open ports: only risky wildcard non-80/443" "$(_audit_eval_open_ports "$OPENSS")" "3306"
+
+# --- metrics parsers ---
+t_eq "load parse"  "$(_metrics_eval_load '0.42 0.55 0.61 1/234 5678')" "0.42 0.55 0.61"
+MEMF="$(printf '              total        used        free\nMem:    8000000000  2100000000  900000000\nSwap:   0 0 0\n')"
+t_eq "mem parse"   "$(_metrics_eval_mem "$MEMF")" "2100000000 8000000000 26"
+DFF="$(printf 'Filesystem 1B-blocks Used Available Capacity Mounted\n/dev/sda1 50000000000 12000000000 38000000000 24%% /\n')"
+t_eq "disk parse"  "$(_metrics_eval_disk "$DFF")" "12000000000 50000000000 24"
+t_eq "uptime parse" "$(_metrics_eval_uptime '1234567.89 9876543.21')" "1234567"
+t_eq "human bytes GB" "$(_metrics_human 2100000000)" "2.0 GB"
+t_eq "uptime human"   "$(_metrics_uptime_human 1234567)" "14d 6h 56m"
+t_eq "section slice"  "$(_metrics_section "$(printf '###LOAD\n0.1 0.2 0.3\n###CPUS\n4\n###END\n')" CPUS)" "4"
 
 # Finding registration yields a valid JSON object with a boolean 'fixable'.
 _AUDIT_ITEMS=()

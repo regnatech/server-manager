@@ -124,6 +124,7 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   cron <site> [action]     Cron jobs: list (default) | add "<sched>" "<cmd>" | remove <n>
   audit [site]             Security audit: findings + one-click fixes
   audit fix <id> [site]    Apply a single audit remediation by id
+  metrics [server]         Health snapshot: CPU, memory, disk, load, services
 
 ${C_BOLD}SERVER COMMANDS${C_RESET}
   connect <name> user@host Register a server (probes SSH + sudo). Add -p to
@@ -179,6 +180,7 @@ main() {
     worker|workers) _require_cmd_impl cmd_worker "$cmd";     cmd_worker "$@";;
     cron)           _require_cmd_impl cmd_cron "$cmd";       cmd_cron "$@";;
     audit)          _require_cmd_impl cmd_audit "$cmd";      cmd_audit "$@";;
+    metrics|health) _require_cmd_impl cmd_metrics "$cmd";    cmd_metrics "$@";;
 
     *)
       err "Unknown command '${cmd}'."
