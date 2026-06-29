@@ -250,6 +250,85 @@ class DemoData {
     ],
   };
 
+  /// The full set of demo audit findings, keyed by id. The demo `audit`
+  /// stream omits any id present in [DemoCliService]'s fixed set so the list
+  /// visibly shrinks after a fix is applied.
+  static List<Map<String, dynamic>> auditFindings(String domain) =>
+      <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'env_exposed',
+          'severity': 'critical',
+          'title': '.env is downloadable over HTTP',
+          'detail': 'https://$domain/.env returns 200.',
+          'recommendation': 'Deny dotfiles in nginx.',
+          'fixable': true,
+          'fix_label': 'Block .env over HTTP',
+        },
+        <String, dynamic>{
+          'id': 'ssh_root_login',
+          'severity': 'high',
+          'title': 'SSH permits root login',
+          'detail': "PermitRootLogin is 'yes'.",
+          'recommendation': 'Set PermitRootLogin to no and use a sudo user.',
+          'fixable': true,
+          'fix_label': 'Disable root SSH login',
+        },
+        <String, dynamic>{
+          'id': 'firewall',
+          'severity': 'high',
+          'title': 'No active firewall',
+          'detail': 'ufw is inactive.',
+          'recommendation': 'Enable ufw (22/80/443 only).',
+          'fixable': true,
+          'fix_label': 'Enable the firewall',
+        },
+        <String, dynamic>{
+          'id': 'fail2ban',
+          'severity': 'medium',
+          'title': 'fail2ban is not running',
+          'detail': 'Brute-force attempts are not throttled.',
+          'recommendation': 'Install fail2ban.',
+          'fixable': true,
+          'fix_label': 'Install fail2ban',
+        },
+        <String, dynamic>{
+          'id': 'https',
+          'severity': 'medium',
+          'title': 'Site served over plain HTTP',
+          'detail': 'Traffic is unencrypted.',
+          'recommendation': "Issue a Let's Encrypt certificate.",
+          'fixable': true,
+          'fix_label': 'Enable HTTPS',
+        },
+        <String, dynamic>{
+          'id': 'db_bind',
+          'severity': 'low',
+          'title': 'Database listens on 0.0.0.0',
+          'detail': 'MySQL is reachable from the network.',
+          'recommendation': 'Bind MySQL to 127.0.0.1.',
+          'fixable': false,
+          'fix_label': '',
+        },
+      ];
+
+  /// Human-readable progress label for a demo `audit fix <id>` run.
+  static String auditFixLabel(String id) {
+    switch (id) {
+      case 'env_exposed':
+        return 'Blocking .env over HTTP';
+      case 'ssh_root_login':
+        return 'Disabling root SSH login';
+      case 'firewall':
+        return 'Enabling the firewall';
+      case 'fail2ban':
+        return 'Installing fail2ban';
+      case 'https':
+        return 'Issuing a TLS certificate';
+      default:
+        return 'Applying remediation';
+    }
+  }
+
   /// A recorded provisioning run for `add --apply`.
   static List<CliEvent> addApplyEvents(String domain) => <CliEvent>[
         BannerEvent(label: 'Provisioning $domain'),
@@ -291,6 +370,10 @@ class DemoCliService implements CliService {
 
   static const Duration _stepGap = Duration(milliseconds: 650);
   static const Duration _shortGap = Duration(milliseconds: 220);
+
+  /// Ids whose remediation has already been applied in this demo session, so a
+  /// subsequent [audit] omits them and the posture visibly improves.
+  static final Set<String> _fixedAuditIds = <String>{};
 
   @override
   Future<VersionEvent> version() async {
@@ -384,6 +467,45 @@ class DemoCliService implements CliService {
         'status': 'valid',
       },
     );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> audit(String domain) async* {
+    yield BannerEvent(label: 'Auditing $domain');
+    yield const SectionEvent(label: 'Security audit');
+    const List<(String, String)> checks = <(String, String)>[
+      ('c1', 'Checking SSH configuration'),
+      ('c2', 'Checking the firewall'),
+      ('c3', 'Checking fail2ban'),
+      ('c4', 'Checking automatic updates'),
+      ('c5', 'Checking .env permissions'),
+      ('c6', 'Checking HTTPS'),
+    ];
+    for (final (String, String) c in checks) {
+      yield StepStart(id: c.$1, label: c.$2);
+      await Future<void>.delayed(const Duration(milliseconds: 380));
+      yield StepEnd(id: c.$1, ok: true, dur: 0.4);
+      await Future<void>.delayed(const Duration(milliseconds: 140));
+    }
+    final List<Map<String, dynamic>> items = DemoData.auditFindings(domain)
+        .where((Map<String, dynamic> f) =>
+            !_fixedAuditIds.contains(f['id'] as String))
+        .toList();
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(kind: 'audit', items: items);
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> auditFix(String id, String domain) async* {
+    yield BannerEvent(label: 'Fixing $id on $domain');
+    final String label = DemoData.auditFixLabel(id);
+    yield StepStart(id: 'fix-$id', label: label);
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    yield StepEnd(id: 'fix-$id', ok: true, dur: 0.7);
+    _fixedAuditIds.add(id);
+    await Future<void>.delayed(const Duration(milliseconds: 120));
     yield const DoneEvent(ok: true);
   }
 

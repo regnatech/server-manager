@@ -35,6 +35,12 @@ abstract class CliService {
   /// `server --json ssl status <domain>` → certificate info.
   Stream<CliEvent> sslStatus(String domain);
 
+  /// `server --json audit <domain>` → step events then an audit [DataEvent].
+  Stream<CliEvent> audit(String domain);
+
+  /// `server --json audit fix <id> <domain>` → step events then a [DoneEvent].
+  Stream<CliEvent> auditFix(String id, String domain);
+
   /// `server --json add --plan` → emits a plan [DataEvent].
   Stream<CliEvent> addPlan();
 
@@ -105,6 +111,14 @@ class LiveCliService implements CliService {
   @override
   Stream<CliEvent> sslStatus(String domain) =>
       _stream(<String>['ssl', 'status', domain]);
+
+  @override
+  Stream<CliEvent> audit(String domain) =>
+      _stream(<String>['audit', domain]);
+
+  @override
+  Stream<CliEvent> auditFix(String id, String domain) =>
+      _stream(<String>['audit', 'fix', id, domain]);
 
   @override
   Stream<CliEvent> addPlan() => _stream(<String>['add', '--plan']);
