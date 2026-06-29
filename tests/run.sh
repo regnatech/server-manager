@@ -36,6 +36,7 @@ source "$ROOT/lib/commands/git.sh"
 source "$ROOT/lib/commands/logs.sh"
 source "$ROOT/lib/commands/diff.sh"
 source "$ROOT/lib/commands/release.sh"
+source "$ROOT/lib/commands/uptime.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -476,6 +477,12 @@ t_true "release list: others not current" grep -q '"name":"20260629_120000","cur
 # keep 2 newest + current; names a..e newest-first, current=d
 RPRUNE="$(_release_prune_select "$(printf 'a\nb\nc\nd\ne\n')" 2 d)"
 t_eq "release prune: removes beyond keep except current" "$(printf '%s' "$RPRUNE" | tr '\n' ' ' | sed 's/ $//')" "c e"
+
+# --- uptime ---
+t_eq "uptime 200 up"    "$(_uptime_eval '200 0.123')" "200 123 1"
+t_eq "uptime 301 up"    "$(_uptime_eval '301 0.050')" "301 50 1"
+t_eq "uptime 503 down"  "$(_uptime_eval '503 1.5')"   "503 1500 0"
+t_eq "uptime timeout"   "$(_uptime_eval '000 0')"     "0 0 0"
 
 # Finding registration yields a valid JSON object with a boolean 'fixable'.
 _AUDIT_ITEMS=()

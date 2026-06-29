@@ -130,6 +130,7 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   audit fix <id> [site]    Apply a single audit remediation by id
   audit fixall [site]      Apply every auto-fixable finding in one go
   metrics [server]         Health snapshot: CPU, memory, disk, load, services
+  uptime [site|--all]      HTTP health check (status, response time, up/down)
   notify <action> …        Notifications: status | set slack|telegram … | test | off
   git <action> <site> …    Git: log|status|branches|checkout|fetch|pull|
                            branch <name>|tag <name>|pr <title>|push [--deploy]|
@@ -192,6 +193,7 @@ main() {
     cron)           _require_cmd_impl cmd_cron "$cmd";       cmd_cron "$@";;
     audit)          _require_cmd_impl cmd_audit "$cmd";      cmd_audit "$@";;
     metrics|health) _require_cmd_impl cmd_metrics "$cmd";    cmd_metrics "$@";;
+    uptime)         _require_cmd_impl cmd_uptime "$cmd";     cmd_uptime "$@";;
     git)            _require_cmd_impl cmd_git "$cmd";        cmd_git "$@";;
     notify)         _require_cmd_impl cmd_notify "$cmd";     cmd_notify "$@";;
 
