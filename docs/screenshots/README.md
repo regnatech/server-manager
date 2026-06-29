@@ -12,6 +12,7 @@ needed). The same Flutter codebase builds for Windows and macOS.
 | **Deploy (complete)** — the full 12-step `update` flow finished | ![deploy-done](06-deploy-done.png) |
 | **Add site wizard** — animated stepper (Discover → Configure → Provision → Done); the form is generated from the backend's `--plan` field spec | ![add](04-add.png) |
 | **Site detail** — tabbed management (Overview · Deploy · Cron · Workers · Logs · SSL) | ![site](05-site.png) |
+| **Terminal** — interactive remote shell (xterm) on the control node; live SSH PTY via dartssh2, with an offline demo shell | ![terminal](07-terminal.png) |
 
 ## How these were generated
 
