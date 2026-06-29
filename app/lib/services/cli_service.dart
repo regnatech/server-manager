@@ -109,6 +109,25 @@ abstract class CliService {
   /// `server --json git merge-abort <domain>` → aborts the merge + done.
   Stream<CliEvent> gitMergeAbort(String domain);
 
+  /// `server --json notify status` → emits a `kind:"notify"` [DataEvent]
+  /// (`value:{slack:bool, telegram:bool}`) then a [DoneEvent].
+  Stream<CliEvent> notifyStatus();
+
+  /// `server --json notify set slack <url>` → log/step events then a
+  /// [DoneEvent]. Configures the Slack incoming-webhook destination.
+  Stream<CliEvent> notifySetSlack(String url);
+
+  /// `server --json notify set telegram <token> <chat>` → step events then a
+  /// [DoneEvent]. Configures the Telegram bot token + target chat id.
+  Stream<CliEvent> notifySetTelegram(String token, String chat);
+
+  /// `server --json notify test` → a "Sending test notification" step then a
+  /// [DoneEvent].
+  Stream<CliEvent> notifyTest();
+
+  /// `server --json notify off` → clears all destinations, then a [DoneEvent].
+  Stream<CliEvent> notifyOff();
+
   /// `server --json add --plan` → emits a plan [DataEvent].
   Stream<CliEvent> addPlan();
 
@@ -264,6 +283,23 @@ class LiveCliService implements CliService {
   @override
   Stream<CliEvent> gitMergeAbort(String domain) =>
       _stream(<String>['git', 'merge-abort', domain]);
+
+  @override
+  Stream<CliEvent> notifyStatus() => _stream(<String>['notify', 'status']);
+
+  @override
+  Stream<CliEvent> notifySetSlack(String url) =>
+      _stream(<String>['notify', 'set', 'slack', url]);
+
+  @override
+  Stream<CliEvent> notifySetTelegram(String token, String chat) =>
+      _stream(<String>['notify', 'set', 'telegram', token, chat]);
+
+  @override
+  Stream<CliEvent> notifyTest() => _stream(<String>['notify', 'test']);
+
+  @override
+  Stream<CliEvent> notifyOff() => _stream(<String>['notify', 'off']);
 
   @override
   Stream<CliEvent> addPlan() => _stream(<String>['add', '--plan']);

@@ -666,6 +666,13 @@ class DemoCliService implements CliService {
   /// [gitMergeContinue]/[gitMergeAbort].
   static final Map<String, Set<String>> _conflicts = <String, Set<String>>{};
 
+  /// Whether each notification destination is configured in this demo session.
+  /// Mutated by [notifySetSlack]/[notifySetTelegram]/[notifyOff] so a
+  /// subsequent [notifyStatus] reflects the change. Starts unconfigured so the
+  /// settings form is the focus of an SM_ROUTE=/settings screenshot.
+  static bool _slackConfigured = false;
+  static bool _telegramConfigured = false;
+
   @override
   Future<VersionEvent> version() async {
     await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -1107,6 +1114,59 @@ class DemoCliService implements CliService {
     await Future<void>.delayed(const Duration(milliseconds: 400));
     _conflicts.remove(domain);
     yield const StepEnd(id: 'merge-abort', ok: true, dur: 0.4);
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> notifyStatus() async* {
+    await Future<void>.delayed(_shortGap);
+    yield DataEvent(
+      kind: 'notify',
+      value: <String, dynamic>{
+        'slack': _slackConfigured,
+        'telegram': _telegramConfigured,
+      },
+    );
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> notifySetSlack(String url) async* {
+    yield const StepStart(id: 'notify-slack', label: 'Saving Slack webhook');
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    yield const StepEnd(id: 'notify-slack', ok: true, dur: 0.5);
+    _slackConfigured = true;
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> notifySetTelegram(String token, String chat) async* {
+    yield const StepStart(id: 'notify-telegram', label: 'Saving Telegram bot');
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    yield const StepEnd(id: 'notify-telegram', ok: true, dur: 0.5);
+    _telegramConfigured = true;
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> notifyTest() async* {
+    yield const StepStart(id: 'notify-test', label: 'Sending test notification');
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    yield const StepEnd(id: 'notify-test', ok: true, dur: 0.6);
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
+  Stream<CliEvent> notifyOff() async* {
+    yield const StepStart(id: 'notify-off', label: 'Disabling notifications');
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    yield const StepEnd(id: 'notify-off', ok: true, dur: 0.4);
+    _slackConfigured = false;
+    _telegramConfigured = false;
+    await Future<void>.delayed(const Duration(milliseconds: 120));
     yield const DoneEvent(ok: true);
   }
 

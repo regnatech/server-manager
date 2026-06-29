@@ -8,6 +8,7 @@ import '../screens/connect_screen.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/health_screen.dart';
 import '../screens/server_audit_screen.dart';
+import '../screens/settings_screen.dart';
 import '../screens/site_detail_screen.dart';
 import '../screens/terminal_screen.dart';
 import '../state/connection_provider.dart';
@@ -90,6 +91,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/audit',
         pageBuilder: (BuildContext context, GoRouterState state) =>
             _fadeThrough(const ServerAuditScreen(), state),
+      ),
+      GoRoute(
+        path: '/settings',
+        pageBuilder: (BuildContext context, GoRouterState state) =>
+            _fadeThrough(const SettingsScreen(), state),
       ),
     ],
   );
