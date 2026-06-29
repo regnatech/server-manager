@@ -129,6 +129,13 @@ OUT="$(disc "$SBOX/vue")";  t_eq "vue fw"  "$(val "$OUT" framework)" vue;    t_e
 t_eq "static fw" "$(val "$(disc "$SBOX/static")" framework)" static
 OUT="$(disc "$SBOX/bun")";  t_eq "bun pm"  "$(val "$OUT" node_pm)" bun
 
+# discover_parse must set DISC_* in the CURRENT shell (regression: was piped,
+# which ran it in a subshell and left DISC_FRAMEWORK unbound under set -u).
+( set -u
+  discover_parse <<<$'app_root=/var/www/x\nframework=laravel\nphp_version=8.3\nredis=1'
+  [[ "$DISC_FRAMEWORK" == laravel && "$DISC_APP_ROOT" == /var/www/x && "$DISC_REDIS" == 1 ]]
+) && t_eq "discover_parse sets globals" ok ok || t_eq "discover_parse sets globals" fail ok
+
 # ---------------------------------------------------------------------------
 section_t "nginx rendering"
 R1="$(nginx_render clicketta.site /var/www/clicketta/public laravel /run/php/php8.3-fpm.sock '')"

@@ -64,7 +64,7 @@ cmd_add() {
   local raw
   raw="$(step_capture "Analyzing project" discover_collect "$root")" \
     || die "Discovery failed."
-  printf '%s\n' "$raw" | discover_parse
+  discover_parse <<<"$raw"   # here-string (not a pipe) so DISC_* land in this shell
 
   # 4. Confirm detected values; prompt for the rest.
   local fw="$DISC_FRAMEWORK"

@@ -27,7 +27,7 @@ cmd_import() {
   section "Auto-discovery"
   local raw
   raw="$(step_capture "Analyzing ${root}" discover_collect "$root")" || die "Discovery failed."
-  printf '%s\n' "$raw" | discover_parse
+  discover_parse <<<"$raw"   # here-string (not a pipe) so DISC_* land in this shell
 
   local fw="${DISC_FRAMEWORK:-static}"
   local app_root="${DISC_APP_ROOT:-$root}"
