@@ -875,6 +875,7 @@ class _AuditTab extends ConsumerWidget {
     return AuditView(
       runAudit: () => cli.audit(domain),
       runFix: (String id) => cli.auditFix(id, domain),
+      runFixAll: () => cli.auditFixAll(domain),
       autoRun: autoRun,
     );
   }

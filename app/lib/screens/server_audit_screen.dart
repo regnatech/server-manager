@@ -62,6 +62,7 @@ class ServerAuditScreen extends ConsumerWidget {
             child: AuditView(
               runAudit: () => cli.audit(),
               runFix: (String id) => cli.auditFix(id),
+              runFixAll: () => cli.auditFixAll(),
               autoRun: true,
             ),
           ),

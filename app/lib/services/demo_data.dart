@@ -881,6 +881,40 @@ class DemoCliService implements CliService {
     yield const DoneEvent(ok: true);
   }
 
+  @override
+  Stream<CliEvent> auditFixAll([String? domain]) async* {
+    final bool server = domain == null || domain.isEmpty;
+    yield BannerEvent(
+      label: server ? 'Fixing all findings on the server' : 'Fixing all findings on $domain',
+    );
+    yield const SectionEvent(label: 'Applying fixes');
+    final List<Map<String, dynamic>> source = server
+        ? DemoData.serverAuditFindings()
+        : DemoData.auditFindings(domain);
+    // Every currently-unfixed, auto-fixable finding in scope.
+    final List<String> ids = <String>[
+      for (final Map<String, dynamic> f in source)
+        if ((f['fixable'] as bool? ?? false) &&
+            !_fixedAuditIds.contains(f['id'] as String))
+          f['id'] as String,
+    ];
+    int applied = 0;
+    for (final String id in ids) {
+      final String label = DemoData.auditFixLabel(id);
+      yield StepStart(id: 'fixall-$id', label: label);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      yield StepEnd(id: 'fixall-$id', ok: true, dur: 0.5);
+      _fixedAuditIds.add(id);
+      applied++;
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+    yield DataEvent(
+      kind: 'audit_fixall',
+      value: <String, dynamic>{'applied': applied, 'failed': 0},
+    );
+    yield const DoneEvent(ok: true);
+  }
+
   String _branchOf(String domain) => _currentBranch[domain] ?? 'main';
 
   @override

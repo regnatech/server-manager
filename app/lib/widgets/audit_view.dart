@@ -26,6 +26,7 @@ class AuditView extends ConsumerStatefulWidget {
     super.key,
     required this.runAudit,
     required this.runFix,
+    this.runFixAll,
     this.autoRun = false,
   });
 
@@ -34,6 +35,10 @@ class AuditView extends ConsumerStatefulWidget {
 
   /// Starts a remediation for the finding [id].
   final Stream<CliEvent> Function(String id) runFix;
+
+  /// Starts a remediation for every auto-fixable finding at once. When null
+  /// the "Fix all" button is hidden.
+  final Stream<CliEvent> Function()? runFixAll;
 
   /// When true, the audit runs once automatically on first build (used by demo
   /// deep-links and the server audit screen).
@@ -52,6 +57,10 @@ class _AuditViewState extends ConsumerState<AuditView> {
   /// Per-finding-id fix state and last step status line.
   final Map<String, _FixState> _fixState = <String, _FixState>{};
   final Map<String, String> _fixStatus = <String, String>{};
+
+  /// "Fix all" lifecycle: true while the batch remediation stream runs.
+  bool _fixingAll = false;
+  String _fixAllStatus = '';
 
   @override
   void initState() {
@@ -136,6 +145,64 @@ class _AuditViewState extends ConsumerState<AuditView> {
     }
   }
 
+  Future<void> _runFixAll() async {
+    final Stream<CliEvent> Function()? run = widget.runFixAll;
+    if (run == null || _fixingAll || _running) return;
+    final int fixableCount = (_findings ?? const <AuditFinding>[])
+        .where((AuditFinding f) => f.fixable)
+        .length;
+    setState(() {
+      _fixingAll = true;
+      _fixAllStatus = 'Applying $fixableCount '
+          '${fixableCount == 1 ? 'fix' : 'fixes'}…';
+    });
+    bool ok = false;
+    int applied = 0;
+    try {
+      await for (final CliEvent e in run()) {
+        if (!mounted) return;
+        switch (e) {
+          case SectionEvent(label: final String l):
+            setState(() => _fixAllStatus = l);
+          case StepStart(label: final String l):
+            setState(() => _fixAllStatus = l);
+          case DataEvent(
+              kind: 'audit_fixall',
+              value: final Map<String, dynamic>? value,
+            ):
+            applied = (value?['applied'] as num?)?.toInt() ?? 0;
+          case DoneEvent(ok: final bool done):
+            ok = done;
+          default:
+            break;
+        }
+      }
+    } catch (_) {
+      ok = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      _fixingAll = false;
+      _fixAllStatus = '';
+    });
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    if (ok) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Applied $applied ${applied == 1 ? 'fix' : 'fixes'}',
+          ),
+        ),
+      );
+      // Re-run the audit so the list visibly shrinks.
+      await _runAudit();
+    } else {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not apply all fixes')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<AuditFinding>? findings = _findings;
@@ -151,6 +218,9 @@ class _AuditViewState extends ConsumerState<AuditView> {
             findings: findings,
             running: _running,
             onRerun: _running ? null : _runAudit,
+            onFixAll: widget.runFixAll != null ? _runFixAll : null,
+            fixingAll: _fixingAll,
+            fixAllStatus: _fixAllStatus,
           ),
           const SizedBox(height: Insets.md),
           Expanded(
@@ -206,11 +276,19 @@ class _AuditHeader extends StatelessWidget {
     required this.findings,
     required this.running,
     required this.onRerun,
+    required this.onFixAll,
+    required this.fixingAll,
+    required this.fixAllStatus,
   });
 
   final List<AuditFinding>? findings;
   final bool running;
   final VoidCallback? onRerun;
+
+  /// Applies every auto-fixable finding at once; null hides the button.
+  final VoidCallback? onFixAll;
+  final bool fixingAll;
+  final String fixAllStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -220,6 +298,10 @@ class _AuditHeader extends StatelessWidget {
     for (final AuditFinding f in list) {
       counts[f.severity] = (counts[f.severity] ?? 0) + 1;
     }
+
+    final int fixableCount =
+        list.where((AuditFinding f) => f.fixable).length;
+    final bool showFixAll = onFixAll != null && fixableCount > 0;
 
     final String posture;
     if (findings == null) {
@@ -259,12 +341,41 @@ class _AuditHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: Insets.sm),
-        AppButton(
-          label: 'Re-run audit',
-          icon: Icons.refresh,
-          tonal: true,
-          loading: running,
-          onPressed: onRerun,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (showFixAll) ...<Widget>[
+                  AppButton(
+                    label: 'Fix all',
+                    icon: Icons.auto_fix_high,
+                    loading: fixingAll,
+                    onPressed: (fixingAll || running) ? null : onFixAll,
+                  ),
+                  const SizedBox(width: Insets.sm),
+                ],
+                AppButton(
+                  label: 'Re-run audit',
+                  icon: Icons.refresh,
+                  tonal: true,
+                  loading: running,
+                  onPressed: fixingAll ? null : onRerun,
+                ),
+              ],
+            ),
+            if (fixingAll && fixAllStatus.isNotEmpty) ...<Widget>[
+              const SizedBox(height: Insets.xs),
+              Text(
+                fixAllStatus,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+          ],
         ),
       ],
     );

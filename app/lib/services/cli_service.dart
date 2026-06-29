@@ -49,6 +49,11 @@ abstract class CliService {
   /// [domain] scopes the fix to a site; omit it for a server-level fix.
   Stream<CliEvent> auditFix(String id, [String? domain]);
 
+  /// `server --json audit fixall [<domain>]` → a step event per applied fix
+  /// then an `audit_fixall` [DataEvent] (`value:{applied, failed}`) then a
+  /// [DoneEvent]. [domain] scopes to a site; omit it for a server-level run.
+  Stream<CliEvent> auditFixAll([String? domain]);
+
   /// `server --json metrics` → step events then a metrics [DataEvent]
   /// (`kind:"metrics"`, `value` matching `ServerMetrics.fromJson`).
   Stream<CliEvent> metrics();
@@ -186,6 +191,13 @@ class LiveCliService implements CliService {
         'audit',
         'fix',
         id,
+        if (domain != null && domain.isNotEmpty) domain,
+      ]);
+
+  @override
+  Stream<CliEvent> auditFixAll([String? domain]) => _stream(<String>[
+        'audit',
+        'fixall',
         if (domain != null && domain.isNotEmpty) domain,
       ]);
 
