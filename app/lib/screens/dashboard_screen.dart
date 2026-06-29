@@ -11,7 +11,6 @@ import '../theme/app_theme.dart';
 import '../theme/breakpoints.dart';
 import '../transport/cli_event.dart';
 import '../widgets/app_button.dart';
-import '../widgets/chip_row.dart';
 import '../widgets/framework_chip.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/section_header.dart';
@@ -215,12 +214,14 @@ class _Grid extends StatelessWidget {
           itemCount: sites.length,
           // Fluidly reflows: cards cap at ~320px wide so a phone shows 2,
           // a tablet 3, and a wide desktop 4+ — resizing the window reflows
-          // and resizes cards continuously, with no fixed widths.
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          // and resizes cards continuously, with no fixed widths. Phone cells
+          // are taller so the 2-up cards have vertical breathing room (chips
+          // can wrap) instead of cramming everything into a short box.
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: kSiteCardMaxExtent,
             mainAxisSpacing: Insets.md,
             crossAxisSpacing: Insets.md,
-            mainAxisExtent: 150,
+            mainAxisExtent: context.isPhone ? 184 : 158,
           ),
           itemBuilder: (BuildContext context, int i) {
             // Entrances settle quickly so screenshots never catch mid-animation.
@@ -265,70 +266,80 @@ class _SiteCard extends StatelessWidget {
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.all(Insets.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      StatusDot(health: site.health),
-                      const SizedBox(width: Insets.sm),
-                      Expanded(
-                        child: Hero(
-                          tag: 'site-title-${site.domain}',
-                          child: Material(
-                            type: MaterialType.transparency,
-                            child: Text(
-                              site.domain,
-                              style: theme.textTheme.titleMedium,
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(Insets.md),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        StatusDot(health: site.health),
+                        const SizedBox(width: Insets.sm),
+                        Expanded(
+                          child: Hero(
+                            tag: 'site-title-${site.domain}',
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: Text(
+                                site.domain,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: Insets.xs),
-                      _TlsBadge(tls: site.tls),
-                    ],
-                  ),
-                  const SizedBox(height: Insets.sm),
-                  // Scrollable so the framework + server chips never overflow
-                  // a narrow 2-up card; least-important chip slides off-edge.
-                  ChipRow(
-                    children: <Widget>[
-                      FrameworkChip(framework: site.framework),
-                      _Pill(label: site.server, color: theme.colorScheme.primary),
-                    ],
-                  ),
-                  const Spacer(),
-                  Row(
-                    children: <Widget>[
-                      Icon(
-                        Icons.schedule,
-                        size: 14,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: Insets.xs),
-                      Expanded(
-                        child: Text(
-                          site.lastDeploy ?? 'never deployed',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
+                        const SizedBox(width: Insets.xs),
+                        _TlsBadge(tls: site.tls),
+                      ],
+                    ),
+                    const SizedBox(height: Insets.md),
+                    // Wrap (not scroll) inside a fixed grid cell so the
+                    // framework + server chips stack to a second line on a
+                    // narrow 2-up card instead of being clipped off-edge.
+                    Wrap(
+                      spacing: Insets.sm,
+                      runSpacing: Insets.sm,
+                      children: <Widget>[
+                        FrameworkChip(framework: site.framework),
+                        _Pill(
+                          label: site.server,
+                          color: theme.colorScheme.primary,
                         ),
-                      ),
-                      const SizedBox(width: Insets.xs),
-                      Icon(
-                        Icons.arrow_forward,
-                        size: 16,
-                        color: accent,
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                    const Spacer(),
+                    Divider(
+                      height: Insets.md,
+                      color: theme.colorScheme.outline.withValues(alpha: 0.4),
+                    ),
+                    Row(
+                      children: <Widget>[
+                        Icon(
+                          Icons.schedule,
+                          size: 14,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: Insets.xs),
+                        Expanded(
+                          child: Text(
+                            site.lastDeploy ?? 'never deployed',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ),
+                        const SizedBox(width: Insets.xs),
+                        Icon(Icons.arrow_forward, size: 16, color: accent),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -389,11 +400,11 @@ class _LoadingGrid extends StatelessWidget {
     return GridView.builder(
       padding: const EdgeInsets.all(Insets.lg),
       itemCount: 6,
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: kSiteCardMaxExtent,
         mainAxisSpacing: Insets.md,
         crossAxisSpacing: Insets.md,
-        mainAxisExtent: 150,
+        mainAxisExtent: context.isPhone ? 184 : 158,
       ),
       itemBuilder: (BuildContext context, int i) {
         return Container(
