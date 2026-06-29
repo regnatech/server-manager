@@ -34,6 +34,7 @@ source "$ROOT/lib/commands/audit.sh"
 source "$ROOT/lib/commands/metrics.sh"
 source "$ROOT/lib/commands/git.sh"
 source "$ROOT/lib/commands/logs.sh"
+source "$ROOT/lib/commands/diff.sh"
 source "$ROOT/lib/deploy/git.sh"
 source "$ROOT/lib/deploy/composer.sh"
 source "$ROOT/lib/deploy/node.sh"
@@ -459,6 +460,12 @@ LJSON="$(_logs_lines_json "$(printf 'line one\nERROR: "boom"\nline three\n')")"
 t_true "logs lines: json array"  grep -qE '^\[.*\]$' <<<"$LJSON"
 t_true "logs lines: escaped"     grep -q '"ERROR: \\"boom\\""' <<<"$LJSON"
 t_eq   "logs lines: count"       "$(printf '%s' "$LJSON" | grep -o '","' | wc -l)" 2
+
+# --- deploy diff ---
+MIGJSON="$(_diff_migrations_json "$(printf 'database/migrations/2026_06_01_000000_create_orders.php\ndatabase/migrations/2026_06_02_000000_add_index.php\n')")"
+t_true "diff migrations: array"   grep -qE '^\[.*\]$' <<<"$MIGJSON"
+t_true "diff migrations: basename" grep -q '"2026_06_01_000000_create_orders.php"' <<<"$MIGJSON"
+t_eq   "diff migrations: empty"   "$(_diff_migrations_json '')" "[]"
 
 # Finding registration yields a valid JSON object with a boolean 'fixable'.
 _AUDIT_ITEMS=()

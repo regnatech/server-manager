@@ -15,7 +15,8 @@ _UPD_PHP=""
 
 cmd_update() {
   local domain="${1:-}"
-  [[ -n "$domain" ]] || die "Usage: server update <site> [--server <name>]"
+  [[ -n "$domain" ]] || die "Usage: server update <site> [--server <name>] | update --all [--framework <fw>]"
+  if [[ "$domain" == "--all" ]]; then _update_all "$@"; return; fi
 
   local server; server="$(registry_resolve_for_site "$domain" "$OPT_SERVER")"
   ssh_use_server "$server"
@@ -266,6 +267,54 @@ _diagnose_node() {
 
   # Fallback: ensure the package manager (and Node) are present.
   step "Auto-fix: ensuring ${pm}" toolchain_ensure_pm "$pm"
+}
+
+# _update_all [--framework <fw>] — deploy every registered site (optionally
+# filtered by --server / --framework), continuing past individual failures.
+_update_all() {
+  shift || true   # drop "--all"
+  local fw_filter=""
+  while (( $# )); do
+    case "$1" in
+      --framework) fw_filter="${2:-}"; shift 2;;
+      *) shift;;
+    esac
+  done
+
+  local entries; entries="$(index_all)"
+  [[ -n "${entries//[$'\n'[:space:]]/}" ]] || die "No sites registered. Add one with 'server add'."
+
+  local targets=() domain srv
+  while IFS=$'\t' read -r domain srv || [[ -n "$domain" ]]; do
+    [[ -z "$domain" ]] && continue
+    [[ -n "$OPT_SERVER" && "$srv" != "$OPT_SERVER" ]] && continue
+    if [[ -n "$fw_filter" ]]; then
+      registry_exists "$srv" || continue
+      ssh_use_server "$srv"
+      site_load "$domain" 2>/dev/null || continue
+      if [[ "$fw_filter" == laravel ]]; then
+        _is_laravel_like "$SITE_FRAMEWORK" || continue
+      else
+        [[ "$SITE_FRAMEWORK" == "$fw_filter" ]] || continue
+      fi
+    fi
+    targets+=("$domain")
+  done <<<"$entries"
+
+  banner "update --all — ${#targets[@]} site(s)${fw_filter:+ (${fw_filter})}"
+  if (( ${#targets[@]} == 0 )); then
+    warn "No sites matched."; return 0
+  fi
+
+  local ok_c=0 fail_c=0 d
+  for d in "${targets[@]}"; do
+    section "▶ ${d}"
+    if ( cmd_update "$d" ); then ok_c=$((ok_c+1)); else fail_c=$((fail_c+1)); warn "${d}: deploy failed (continuing)."; fi
+  done
+
+  ok "Done: ${ok_c} deployed, ${fail_c} failed (of ${#targets[@]})."
+  json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind deploy_all),$(json_kv_raw value "{$(json_kv_raw total "${#targets[@]}"),$(json_kv_raw deployed "$ok_c"),$(json_kv_raw failed "$fail_c")}")}"
+  return 0
 }
 
 # _update_abort <domain> <ts> <sha_before> <sha_after> <backup_dir> <message>

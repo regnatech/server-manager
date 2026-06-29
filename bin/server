@@ -111,6 +111,8 @@ ${C_BOLD}USAGE${C_RESET}
 ${C_BOLD}SITE COMMANDS${C_RESET}
   add [domain] [root]      Wizard: discover, configure and provision a new site
   update <site>            Intelligent zero-downtime deploy (pull, build, migrate, restart)
+  update --all [--framework <fw>]  Deploy every matching site
+  diff <site>              Preview what a deploy would apply (commits + migrations)
   rollback <site> [target] Roll back to a previous deploy (default: previous)
   ssl <site>               Issue or renew the Let's Encrypt certificate
   list                     List managed sites and their health
@@ -174,6 +176,7 @@ main() {
 
     add)            _require_cmd_impl cmd_add "$cmd";      cmd_add "$@";;
     update)         _require_cmd_impl cmd_update "$cmd";   cmd_update "$@";;
+    diff)           _require_cmd_impl cmd_diff "$cmd";     cmd_diff "$@";;
     rollback)       _require_cmd_impl cmd_rollback "$cmd"; cmd_rollback "$@";;
     ssl)            _require_cmd_impl cmd_ssl "$cmd";       cmd_ssl "$@";;
     list)           _require_cmd_impl cmd_list "$cmd";      cmd_list "$@";;
