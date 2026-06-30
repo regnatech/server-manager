@@ -8,3 +8,7 @@ tests/docker/id_test.pub
 
 # JetBrains IDE config
 .idea/
+
+# Python bytecode (MCP server)
+__pycache__/
+*.pyc
