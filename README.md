@@ -1,20 +1,103 @@
 # server-manager
 
-**A zero-config CLI for deploying and managing web apps on remote Linux servers
-over SSH.**
+**Ship to a Linux server the way you wish you could — one wizard, then
+`server update`.** Zero‑config deploys, rollbacks, TLS, databases, queues and a
+security audit, over plain SSH with no agent on the box. And your AI can drive
+all of it through [MCP](#mcp-server-ai-access).
 
-Point it at a server, run a wizard once, and you get intelligent zero‑downtime
-deploys, rollbacks, TLS, databases, cron, workers and a security audit. There
-are no agents to install on the server and no config files to hand‑edit —
-server‑manager probes the box, discovers your project, and remembers everything
-under `/etc/server-manager/` on the server itself.
+```bash
+server connect prod root@203.0.113.10     # register a server (auto-installs deps)
+server add     app.com /var/www/app/public # wizard: detect framework, nginx, DB, TLS
+server update  app.com                      # zero-downtime deploy (clones on first run)
+```
 
-Pure Bash over SSH: runs anywhere with `bash` + `ssh`.
+…and that's a production Laravel/Symfony/Node site: built, migrated,
+TLS‑secured, with the scheduler and queue workers (Horizon) already running.
+
+> Pure Bash over SSH — runs anywhere with `bash` + `ssh`. No agent to install,
+> no config files to hand‑edit. The server is the source of truth.
+
+---
+
+## Why it actually helps
+
+The boring, error‑prone parts of running a server — provisioning, deploy order,
+TLS, migrations, workers, rollbacks — are exactly where a small mistake costs you
+an outage at 2am. server‑manager turns each into one intentful command, and
+makes the safe thing the default.
+
+<details>
+<summary><b>🚀 One command instead of a runbook</b></summary>
+
+<br>`server update` runs the whole sequence for you, in the right order, with a
+backup first and the site brought back online automatically if a step fails:
+
+```
+backup → maintenance mode → git pull (clone on first deploy) → composer →
+frontend build → migrations → cache → restart → health check → timed report
+```
+
+No more half‑remembered SSH sessions and `cd /var/www && git pull && …`.
+</details>
+
+<details>
+<summary><b>🩹 Self‑healing deploys</b></summary>
+
+<br>When a build step fails because something's missing, it **diagnoses the
+error and fixes exactly that**, then retries — instead of dumping a stack trace
+on you:
+
+```
+✖ Installing Composer dependencies   (requires ext-gd … missing)
+✔ Auto-fix: installing PHP extension gd
+✔ Installing Composer dependencies (retry)
+```
+
+Missing PHP extension, Composer/Node/pnpm, unzip, git, Composer OOM — handled.
+</details>
+
+<details>
+<summary><b>⚙️ Production‑ready by default</b></summary>
+
+<br>For Laravel/Symfony it doesn't just copy files — it makes the app *run* in
+production: enables the **scheduler**, sets up **queue workers** (installs and
+starts **Horizon** for Laravel; a **Messenger** consumer for Symfony), runs
+**migrations**, warms caches, and sizes the worker pool to the server's CPU/RAM
+(you can override). Private repos work via an auto‑provisioned **deploy key**.
+</details>
+
+<details>
+<summary><b>🖥️ A real control panel in your terminal</b></summary>
+
+<br>`server ui` is a full‑screen TUI: every site with framework/TLS/last‑deploy,
+and per‑site actions — deploy, logs, rollback, TLS, audit, **database
+import/export**, a **file manager** (browse + edit remote files), **scale
+workers**, toggle the scheduler, open a shell. No browser, no Electron.
+</details>
+
+<details>
+<summary><b>🤖 Your AI can operate it — safely</b></summary>
+
+<br>`server mcp` exposes the **whole CLI** to an AI assistant over
+[MCP](#mcp-server-ai-access). Ask Claude *"deploy app.com and show me the logs if
+it fails"* and it can — with **your approval on every action**, read‑only mode
+available, and secrets kept off by default.
+</details>
+
+<details>
+<summary><b>🔒 Safe by construction</b></summary>
+
+<br>Every deploy is backed up and **instantly reversible** (`server rollback`).
+A built‑in **security audit** flags root SSH login, open firewalls, exposed
+`.env`, missing HTTPS and more — each with a one‑click fix. State lives on the
+server, so the tool is stateless and disposable.
+</details>
 
 ---
 
 ## Table of contents
 
+- [Why it actually helps](#why-it-actually-helps)
 - [Features](#features)
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
@@ -58,17 +141,20 @@ Pure Bash over SSH: runs anywhere with `bash` + `ssh`.
 
 ## How it works
 
-```
-┌──────────────────────┐        SSH         ┌────────────────────────┐       SSH
-│  You (CLI: bash+ssh)  │  ───────────────▶  │  Control node (Linux)  │  ───────────▶  managed
-│                       │                    │  server-manager engine │   per-server   servers
-└──────────────────────┘                    │  (bash)                │ ◀───────────  (targets)
-                                             └────────────────────────┘
+```mermaid
+flowchart LR
+    you["👩‍💻 You<br/>(CLI / server ui)"] -->|runs| engine
+    ai["🤖 AI assistant"] -->|MCP · approve each call| engine["server-manager engine<br/>(Bash)"]
+    engine -->|SSH| s1["🖥️ server: prod"]
+    engine -->|SSH| s2["🖥️ server: staging"]
+    s1 -. "state under /etc/server-manager" .- s1
 ```
 
-The CLI runs the engine and SSHes out to each managed server. State lives on
-each managed server under `/etc/server-manager/`; you never edit it by hand.
-A single box can also manage **itself** (`server connect-self`).
+The engine runs locally and SSHes out to each managed server — no agent on the
+box. **State lives on each server** under `/etc/server-manager/` (the source of
+truth), so the tool itself is stateless and disposable. A single box can also
+manage **itself** (`server connect-self`), and an AI assistant can drive the
+same engine through [MCP](#mcp-server-ai-access) with per‑call approval.
 
 ---
 
