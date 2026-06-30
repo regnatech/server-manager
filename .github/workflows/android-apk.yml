@@ -6,7 +6,9 @@ name: Build Android APK
 on:
   workflow_dispatch:        # manual "Run workflow" button
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'claude/**'        # build + publish from in-progress Claude branches too
     paths:
       - 'app/**'
       - '.github/workflows/android-apk.yml'
