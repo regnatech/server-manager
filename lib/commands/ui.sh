@@ -26,6 +26,7 @@ UI_MENU_LABELS=(
   "Security audit"
   "Show .env"
   "Import database"
+  "Export database (backup)"
   "Upload file / directory"
   "Scale workers"
   "Toggle scheduler"
@@ -220,14 +221,15 @@ _ui_menu_action() {
     4)  _ui_run "Audit ${d}"         cmd_audit    "$d";;
     5)  _ui_run "Env ${d}"           cmd_env      "$d" show;;
     6)  _ui_run "Import database ${d}" cmd_db import "$d";;
-    7)  _ui_run "Upload to ${d}"     _ui_upload   "$d";;
-    8)  _ui_run "Scale workers ${d}" cmd_worker   "$d" scale; _ui_load_site_detail;;
-    9)  # Toggle scheduler based on the current state.
+    7)  _ui_run "Export database ${d}" cmd_db export "$d";;
+    8)  _ui_run "Upload to ${d}"     _ui_upload   "$d";;
+    9)  _ui_run "Scale workers ${d}" cmd_worker   "$d" scale; _ui_load_site_detail;;
+    10) # Toggle scheduler based on the current state.
         if [[ "$UI_DET_SCHED" == on ]]; then _ui_run "Disable scheduler ${d}" cmd_scheduler "$d" off
         else _ui_run "Enable scheduler ${d}" cmd_scheduler "$d" on; fi
         _ui_load_site_detail;;
-    10) _ui_run "Shell ${d}"         _ui_shell    "$d";;
-    11) UI_VIEW=sites;;
+    11) _ui_run "Shell ${d}"         _ui_shell    "$d";;
+    12) UI_VIEW=sites;;
   esac
 }
 
