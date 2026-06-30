@@ -123,8 +123,12 @@ _worker_scale() {
     fi
     say "  Current:     ${SITE_WORKER_PROCS:-default} processes" >&2
     say "  Recommended: ${C_BOLD}${rec}${C_RESET} ${C_GREY}(${cores} cores, ${mem} MB RAM)${C_RESET}" >&2
-    say "  Set with:    server worker ${site} scale <n>" >&2
-    return 0
+    # Non-interactive: just report. Interactive: prompt and apply.
+    if json_mode || [[ "${SRVMGR_ASSUME_YES:-0}" == "1" ]]; then
+      say "  Set with:    server worker ${site} scale <n>" >&2
+      return 0
+    fi
+    n="$(ask "How many worker processes?" "${SITE_WORKER_PROCS:-$rec}")"
   fi
 
   [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )) || die "Provide a positive integer (recommended: ${rec})."

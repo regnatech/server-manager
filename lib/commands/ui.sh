@@ -25,6 +25,8 @@ UI_MENU_LABELS=(
   "Renew TLS certificate"
   "Security audit"
   "Show .env"
+  "Scale workers"
+  "Toggle scheduler"
   "Open a shell"
   "Back"
 )
@@ -143,6 +145,9 @@ _ui_render_sites() {
 _ui_render_menu() {
   _ui_row "${C_BOLD}${C_CYAN} ${UI_DOMAIN} ${C_RESET}${C_GREY}on ${UI_SERVER}${C_RESET}"
   _ui_row ""
+  _ui_row "  ${C_GREY}Framework${C_RESET}  $(printf '%-16s' "${UI_DET_FW:-…}")${C_GREY}TLS${C_RESET}  ${UI_DET_TLS:-…}"
+  _ui_row "  ${C_GREY}Scheduler${C_RESET}  $(printf '%-16s' "${UI_DET_SCHED:-…}")${C_GREY}Worker${C_RESET}  ${UI_DET_WORKER:-…}"
+  _ui_row ""
   _ui_row "${C_GREY}Actions${C_RESET}"
   local i
   for i in "${!UI_MENU_LABELS[@]}"; do
@@ -151,6 +156,31 @@ _ui_render_menu() {
   done
   _ui_row ""
   _ui_row "${C_GREY}↑/↓ move · enter run · esc back · q quit${C_RESET}"
+}
+
+# _ui_load_site_detail — read the selected site's config (one SSH round-trip)
+# into UI_DET_* for the menu header: framework, TLS, scheduler and worker.
+_ui_load_site_detail() {
+  UI_DET_FW="…"; UI_DET_TLS="…"; UI_DET_SCHED="…"; UI_DET_WORKER="…"
+  if ! registry_exists "$UI_SERVER"; then
+    UI_DET_FW="(no server)"; UI_DET_TLS="-"; UI_DET_SCHED="-"; UI_DET_WORKER="-"; return
+  fi
+  ssh_use_server "$UI_SERVER"
+  if site_load "$UI_DOMAIN" 2>/dev/null; then
+    UI_DET_FW="$(framework_label "$SITE_FRAMEWORK")"
+    [[ "$SITE_HTTPS" == 1 ]] && UI_DET_TLS="yes" || UI_DET_TLS="no"
+    [[ "$SITE_SCHEDULER" == 1 ]] && UI_DET_SCHED="on" || UI_DET_SCHED="off"
+    if [[ "$SITE_HORIZON" == 1 ]]; then
+      UI_DET_WORKER="Horizon (${SITE_WORKER_PROCS:-auto})"
+    elif [[ "$SITE_QUEUE" == 1 ]]; then
+      if [[ "$SITE_FRAMEWORK" == symfony ]]; then UI_DET_WORKER="Messenger (${SITE_WORKER_PROCS:-2})"
+      else UI_DET_WORKER="Queue (${SITE_WORKER_PROCS:-2})"; fi
+    else
+      UI_DET_WORKER="none"
+    fi
+  else
+    UI_DET_FW="(missing)"; UI_DET_TLS="-"; UI_DET_SCHED="-"; UI_DET_WORKER="-"
+  fi
 }
 
 # --- actions --------------------------------------------------------------
@@ -181,14 +211,19 @@ _ui_shell() {
 _ui_menu_action() {
   local d="$UI_DOMAIN"
   case "$1" in
-    0) _ui_run "Deploy ${d}"        cmd_update   "$d"; _ui_load_status;;
+    0) _ui_run "Deploy ${d}"        cmd_update   "$d"; _ui_load_status; _ui_load_site_detail;;
     1) _ui_run "Logs ${d}"          cmd_logs     "$d";;
-    2) _ui_run "Roll back ${d}"     cmd_rollback "$d"; _ui_load_status;;
-    3) _ui_run "Renew TLS ${d}"     cmd_ssl      "$d"; _ui_load_status;;
+    2) _ui_run "Roll back ${d}"     cmd_rollback "$d"; _ui_load_status; _ui_load_site_detail;;
+    3) _ui_run "Renew TLS ${d}"     cmd_ssl      "$d"; _ui_load_status; _ui_load_site_detail;;
     4) _ui_run "Audit ${d}"         cmd_audit    "$d";;
     5) _ui_run "Env ${d}"           cmd_env      "$d" show;;
-    6) _ui_run "Shell ${d}"         _ui_shell    "$d";;
-    7) UI_VIEW=sites;;
+    6) _ui_run "Scale workers ${d}" cmd_worker   "$d" scale; _ui_load_site_detail;;
+    7) # Toggle scheduler based on the current state.
+       if [[ "$UI_DET_SCHED" == on ]]; then _ui_run "Disable scheduler ${d}" cmd_scheduler "$d" off
+       else _ui_run "Enable scheduler ${d}" cmd_scheduler "$d" on; fi
+       _ui_load_site_detail;;
+    8) _ui_run "Shell ${d}"         _ui_shell    "$d";;
+    9) UI_VIEW=sites;;
   esac
 }
 
@@ -260,7 +295,9 @@ _ui_key_sites() {
       (( n )) || { UI_MSG="No sites yet — press 'a' to add one."; return 0; }
       local row="${UI_SITES[$UI_SEL]}"
       UI_DOMAIN="${row%%$'\t'*}"; UI_SERVER="${row#*$'\t'}"
-      UI_VIEW=menu; UI_MSEL=0;;
+      UI_VIEW=menu; UI_MSEL=0
+      UI_DET_FW="…"; UI_DET_TLS="…"; UI_DET_SCHED="…"; UI_DET_WORKER="…"
+      _ui_render; _ui_load_site_detail;;
     refresh) _ui_load_sites; UI_MSG="Loading status…"; _ui_render; _ui_load_status; UI_MSG="Refreshed.";;
     help)    _ui_help;;
     char:a)  _ui_run "Add a site" cmd_add; _ui_load_sites;;
@@ -299,6 +336,7 @@ cmd_ui() {
   config_init_local
   UI_VIEW=sites; UI_SEL=0; UI_MSEL=0; UI_MSG=""
   UI_DOMAIN=""; UI_SERVER=""
+  UI_DET_FW=""; UI_DET_TLS=""; UI_DET_SCHED=""; UI_DET_WORKER=""
   UI_SITES=(); UI_STATUS=()
   _ui_load_sites
 
