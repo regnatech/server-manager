@@ -110,8 +110,8 @@ _db_export_to_file() {
 _human_size() {
   local f="$1" b
   b="$(wc -c <"$f" 2>/dev/null | tr -d ' ')" || { printf '?'; return; }
-  if   (( b >= 1073741824 )); then awk -v b="$b" 'BEGIN{printf "%.1fGB", b/1073741824}'
-  elif (( b >= 1048576 ));    then awk -v b="$b" 'BEGIN{printf "%.1fMB", b/1048576}'
-  elif (( b >= 1024 ));       then awk -v b="$b" 'BEGIN{printf "%.1fKB", b/1024}'
+  if   (( b >= 1073741824 )); then LC_ALL=C awk -v b="$b" 'BEGIN{printf "%.1fGB", b/1073741824}'
+  elif (( b >= 1048576 ));    then LC_ALL=C awk -v b="$b" 'BEGIN{printf "%.1fMB", b/1048576}'
+  elif (( b >= 1024 ));       then LC_ALL=C awk -v b="$b" 'BEGIN{printf "%.1fKB", b/1024}'
   else printf '%dB' "$b"; fi
 }

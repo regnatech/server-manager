@@ -14,7 +14,9 @@ SRVMGR_UPTIME_DIR="${SRVMGR_UPTIME_DIR:-$SRVMGR_HOME/uptime}"
 # _uptime_eval <"<http_code> <time_total_seconds>"> -> "code ms up"
 # up=1 for 2xx/3xx, else 0. ms is integer milliseconds.
 _uptime_eval() {
-  printf '%s\n' "$1" | awk '{
+  # LC_ALL=C so awk parses the fractional seconds with a '.' decimal point
+  # (an it_IT locale would otherwise read "0.123" as 0).
+  printf '%s\n' "$1" | LC_ALL=C awk '{
     code=$1+0; ms=int(($2+0)*1000);
     up=(code>=200 && code<400)?1:0;
     printf "%d %d %d", code, ms, up

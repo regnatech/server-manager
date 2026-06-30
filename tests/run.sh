@@ -479,7 +479,7 @@ t_true "git conflict keeps ours"     grep -q '"ours":"our code"' <<<"$GCONF"
 LJSON="$(_logs_lines_json "$(printf 'line one\nERROR: "boom"\nline three\n')")"
 t_true "logs lines: json array"  grep -qE '^\[.*\]$' <<<"$LJSON"
 t_true "logs lines: escaped"     grep -q '"ERROR: \\"boom\\""' <<<"$LJSON"
-t_eq   "logs lines: count"       "$(printf '%s' "$LJSON" | grep -o '","' | wc -l)" 2
+t_eq   "logs lines: count"       "$(printf '%s' "$LJSON" | grep -o '","' | grep -c .)" 2
 
 # --- deploy diff ---
 MIGJSON="$(_diff_migrations_json "$(printf 'database/migrations/2026_06_01_000000_create_orders.php\ndatabase/migrations/2026_06_02_000000_add_index.php\n')")"

@@ -142,7 +142,9 @@ _metrics_section() {
 
 # _metrics_human <bytes> -> human readable (e.g. 2.1 GB)
 _metrics_human() {
-  awk -v b="${1:-0}" 'BEGIN{
+  # LC_ALL=C so the decimal point is always '.', regardless of the operator's
+  # locale (e.g. it_IT would otherwise print "2,0 GB" and misparse inputs).
+  LC_ALL=C awk -v b="${1:-0}" 'BEGIN{
     split("B KB MB GB TB PB", u, " "); i=1;
     while (b>=1024 && i<6){b/=1024; i++}
     printf (i==1?"%d %s":"%.1f %s"), b, u[i]

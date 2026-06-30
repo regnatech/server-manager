@@ -375,9 +375,11 @@ _ui_now() {
   esac
 }
 
-# _ui_elapsed start end -> formatted seconds (1 decimal)
+# _ui_elapsed start end -> formatted seconds (1 decimal). LC_ALL=C so the
+# decimal point is always '.' — this value becomes the JSON "dur" field, and a
+# locale comma (e.g. it_IT) would make it invalid JSON and misparse the inputs.
 _ui_elapsed() {
-  awk -v a="$1" -v b="$2" 'BEGIN { d=b-a; if (d<0) d=0; printf "%.1f", d }'
+  LC_ALL=C awk -v a="$1" -v b="$2" 'BEGIN { d=b-a; if (d<0) d=0; printf "%.1f", d }'
 }
 
 # _ui_sleep — fractional sleep that works even where `sleep 0.1` doesn't
