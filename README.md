@@ -24,6 +24,7 @@ Pure Bash over SSH: runs anywhere with `bash` + `ssh`.
 - [Examples](#examples)
 - [Self‑healing deploys](#self-healing-deploys)
 - [Security audit](#security-audit)
+- [MCP server (AI access)](#mcp-server-ai-access)
 - [The JSON protocol](#the-json-protocol)
 - [Where things live](#where-things-live)
 - [Development](#development)
@@ -235,6 +236,59 @@ Checks include: root SSH login, SSH password auth, firewall (ufw), fail2ban,
 automatic security updates, pending security updates, world‑readable `.env`,
 `.env` exposed over HTTP, and missing HTTPS. Each finding reports a severity and
 a recommendation; the fixable ones can be remediated with a single command.
+
+---
+
+## MCP server (AI access)
+
+`server mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+server so an AI assistant (Claude Desktop, Claude Code, …) can drive the **whole
+CLI** — list/deploy/rollback sites, read logs/metrics/audits, manage TLS,
+workers, cron, the `.env`, files, git, databases, and more. It's a thin python3
+wrapper (stdlib only) around `server --json`, speaking JSON-RPC over stdio.
+
+**Requirements:** `python3` on the machine that runs the CLI.
+
+**Add it to Claude Code**
+
+```bash
+# Writes enabled — you approve each action in the client (recommended):
+claude mcp add server-manager -- server mcp
+
+# Observe-only (no mutating tools):
+claude mcp add server-manager --env SM_MCP_READONLY=1 -- server mcp
+```
+
+**Add it to Claude Desktop** — in `claude_desktop_config.json`:
+
+```jsonc
+{
+  "mcpServers": {
+    "server-manager": {
+      "command": "server",
+      "args": ["mcp"]
+      // "env": { "SM_MCP_READONLY": "1" }       // observe-only
+      // "env": { "SM_MCP_ALLOW_SECRETS": "1" }  // allow reading .env values
+    }
+  }
+}
+```
+
+(If `server` isn't on the client's PATH, use the absolute path to `bin/server`.)
+
+**Permissions** — write tools are available by default and the MCP client asks
+you to approve each call. `SM_MCP_READONLY=1` disables all mutating tools;
+reading `.env` secrets is opt‑in via `SM_MCP_ALLOW_SECRETS=1`. Full details and
+the tool list are in [`docs/mcp.md`](docs/mcp.md).
+
+**Quick check** (the server speaks newline‑delimited JSON‑RPC on stdio):
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | server mcp
+```
 
 ---
 
