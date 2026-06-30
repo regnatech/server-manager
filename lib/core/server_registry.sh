@@ -243,6 +243,12 @@ cmd_server_connect() {
     say "  or connect as root. Provisioning/deploys will fail until then."
   fi
 
+  # Pre-install the base tools a deploy needs, so the first deploy runs smoothly.
+  # Re-load the record so the privilege strategy we just set takes effect.
+  ssh_use_server "$name"
+  step "Installing base tools (git, curl, unzip)" toolchain_ensure_base \
+    || warn "Could not pre-install base tools; the deploy will fetch them on demand."
+
   # First server registered becomes the default.
   if [[ -z "$(registry_default)" ]]; then
     global_set default_server "$name"
@@ -317,6 +323,11 @@ cmd_server_connect_self() {
     warn "Passwordless sudo is NOT available for ${who}; provisioning may fail."
     say "  Grant NOPASSWD sudo (/etc/sudoers.d/${who}: ${who} ALL=(ALL) NOPASSWD:ALL) or run as root."
   fi
+
+  # Pre-install the base tools a deploy needs (re-load so 'become' is in effect).
+  ssh_use_server "$name"
+  step "Installing base tools (git, curl, unzip)" toolchain_ensure_base \
+    || warn "Could not pre-install base tools; the deploy will fetch them on demand."
 
   if [[ -z "$(registry_default)" ]]; then
     global_set default_server "$name"

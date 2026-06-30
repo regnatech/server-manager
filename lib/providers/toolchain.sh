@@ -161,6 +161,27 @@ command -v unzip >/dev/null 2>&1 && echo "unzip installed"
 EOF
 }
 
+# toolchain_ensure_base — install the handful of tools every deploy needs
+# (git, curl, unzip, ca-certificates) so the first deploy doesn't stop to fetch
+# them. Idempotent: a no-op when git/curl/unzip are already on PATH.
+toolchain_ensure_base() {
+  ssh_script --sudo <<'EOF'
+set -e
+miss=0
+for c in git curl unzip; do command -v "$c" >/dev/null 2>&1 || miss=1; done
+if [ "$miss" -eq 0 ]; then echo "base tools already present"; exit 0; fi
+if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y >/dev/null 2>&1 || true
+  apt-get install -y git curl unzip ca-certificates
+elif command -v dnf >/dev/null 2>&1; then dnf install -y git curl unzip ca-certificates
+elif command -v yum >/dev/null 2>&1; then yum install -y git curl unzip ca-certificates
+elif command -v apk >/dev/null 2>&1; then apk add --no-cache git curl unzip ca-certificates
+else echo "no supported package manager to install base tools" >&2; exit 1; fi
+echo "base tools installed (git, curl, unzip, ca-certificates)"
+EOF
+}
+
 # toolchain_ensure_redis — install + start a Redis server (Horizon/queues need
 # one). Idempotent: a no-op when redis-server is already present.
 toolchain_ensure_redis() {
