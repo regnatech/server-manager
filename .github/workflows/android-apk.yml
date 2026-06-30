@@ -12,7 +12,7 @@ on:
       - '.github/workflows/android-apk.yml'
 
 permissions:
-  contents: read
+  contents: write   # needed to publish the APKs as a GitHub Release asset
 
 jobs:
   build-apk:
@@ -51,10 +51,27 @@ jobs:
       - name: List artifacts
         run: ls -lh build/app/outputs/flutter-apk/
 
-      - name: Upload APKs
+      - name: Upload APKs (CI artifact, 30-day retention)
         uses: actions/upload-artifact@v4
         with:
           name: server-manager-apk
           path: app/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      # Also publish to a rolling "android-latest" Release so the APK has a
+      # permanent, CDN-served download link (artifact links expire and live on
+      # blob storage some networks block). The universal app-release.apk is the
+      # one to install on any phone.
+      - name: Publish APKs to rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-latest
+          name: Server Manager — latest Android build
+          body: |
+            Automated build from `${{ github.sha }}` (run #${{ github.run_number }}).
+
+            Install **app-release.apk** (universal). The `*-abi.apk` files are
+            smaller per-architecture variants if you know your device's ABI.
+          files: app/build/app/outputs/flutter-apk/*.apk
+          fail_on_unmatched_files: true
