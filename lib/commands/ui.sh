@@ -35,6 +35,11 @@ UI_MENU_LABELS=(
   "Back"
 )
 
+# Timeout (seconds) used to tell a bare ESC from an arrow sequence. bash >= 4
+# supports fractional read -t; bash 3.2 only integers, so fall back to 1s (a
+# lone ESC then registers after ~1s — arrows stay instant).
+if (( ${BASH_VERSINFO[0]:-3} >= 4 )); then _UI_ESC_T=0.05; else _UI_ESC_T=1; fi
+
 # --- terminal -------------------------------------------------------------
 
 _ui_enter_screen() {
@@ -58,17 +63,22 @@ _ui_size() {
 # Read one logical key; echoes a name: up|down|left|right|enter|back|quit|
 # refresh|help|char:<c>.
 _ui_read_key() {
-  local c rest
+  local c c2 c3
   IFS= read -rsn1 c || { echo quit; return; }
   if [[ "$c" == $'\033' ]]; then
-    stty min 0 time 1 2>/dev/null      # ~0.1s poll for the rest of the sequence
-    IFS= read -rsn2 rest
-    stty min 1 time 0 2>/dev/null
-    case "$rest" in
-      '[A'|'OA') echo up;;   '[B'|'OB') echo down;;
-      '[C'|'OC') echo right;; '[D'|'OD') echo left;;
-      '') echo back;;        *) echo other;;
-    esac
+    # Distinguish a bare ESC from an arrow sequence with bash's own timeout
+    # (stty VTIME isn't reliably honored by `read -n`, so a lone ESC would
+    # otherwise block). Once we've seen '[' / 'O' the final byte is guaranteed,
+    # so read it without a timeout (robust over slow links).
+    if ! IFS= read -rsn1 -t "$_UI_ESC_T" c2; then echo back; return; fi
+    if [[ "$c2" == '[' || "$c2" == 'O' ]]; then
+      IFS= read -rsn1 c3
+      case "$c3" in
+        A) echo up;; B) echo down;; C) echo right;; D) echo left;; *) echo other;;
+      esac
+    else
+      echo back   # bare ESC (or Alt+<key>, which we treat as back)
+    fi
     return
   fi
   case "$c" in
