@@ -7,7 +7,7 @@
 # with `config set`. Secrets (tokens) are write-only over the wire: `list`
 # reports whether they're set, never their value.
 #
-# Add a key here and it appears in the CLI and the app automatically.
+# Add a key here and it appears in the CLI and --json output automatically.
 
 # key | label | section | type(string|secret|bool)
 _CONFIG_SCHEMA=(

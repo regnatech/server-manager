@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 #
 # json.sh — minimal JSON output helpers for the machine-readable (`--json`)
-# mode that the Flutter desktop UI drives over SSH.
+# mode for machine-readable output (see docs/json-protocol.md).
 #
 # Design: server-manager already funnels every human message through ui.sh.
 # When SRVMGR_JSON=1, ui.sh emits one NDJSON event per line on stdout instead

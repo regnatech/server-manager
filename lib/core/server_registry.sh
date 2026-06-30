@@ -269,7 +269,7 @@ _authorize_self_key() {
 # `server connect-self [name]` — register THIS machine as a managed target,
 # reachable over SSH at 127.0.0.1. Non-interactive: since we already have shell
 # access here, we generate (if needed) and self-authorize an SSH key so key
-# login to localhost works under BatchMode. This is what the GUI's one-tap
+# login to localhost works under BatchMode. This backs a one-tap
 # "Register this server" calls when self-managing a single box.
 # ---------------------------------------------------------------------------
 cmd_server_connect_self() {

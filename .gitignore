@@ -5,3 +5,6 @@ tests/docker/id_test.pub
 # Local scratch
 *.log
 .DS_Store
+
+# JetBrains IDE config
+.idea/

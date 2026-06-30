@@ -26,7 +26,7 @@ _choose_framework() {
 }
 
 cmd_add() {
-  # GUI/headless two-phase contract: `--json add --plan` emits a form spec and
+  # Headless two-phase contract: `--json add --plan` emits a form spec and
   # `--json add --apply --answers <file>` provisions non-interactively. Both
   # bypass the interactive prompts below (which read stdin and can't run over a
   # non-TTY SSH exec).
@@ -347,7 +347,7 @@ _add_install_nginx() {
 }
 
 # ---------------------------------------------------------------------------
-# JSON (GUI) two-phase add: plan + apply
+# JSON two-phase add: plan + apply
 # ---------------------------------------------------------------------------
 
 # _add_str_array <item>... -> ["item",...]  (JSON string array)
@@ -375,7 +375,7 @@ _add_field() {
   printf '%s' "$o"
 }
 
-# _add_plan_emit — emit the `kind:"plan"` form spec the GUI renders. Static
+# _add_plan_emit — emit the `kind:"plan"` form spec a client renders. Static
 # (no root known yet, so no discovery): asks for everything up front.
 _add_plan_emit() {
   local fw_opts server_opts default_server="" servers_field=""

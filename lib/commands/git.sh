@@ -3,7 +3,7 @@
 # git.sh — `server git <log|status|branches|fetch|checkout|pull|push|deploy> <site>`
 #
 # A small git client for a site's deployed checkout (runs git in the site's
-# app_root over SSH). It powers the app's GitKraken-style view and the headline
+# app_root over SSH). It powers a Git view and the headline
 # "Push & Deploy": `server git push <site> --deploy` pushes the current branch
 # and then runs the normal deploy.
 #
@@ -286,7 +286,7 @@ _git_cmd_merge() {
 
 # server git resolve <site> <path> [--tmp <remote-file>]
 #   Apply a resolved version of a conflicted file: copy from <remote-file>
-#   (uploaded by the app via SFTP) or read it from stdin (CLI), then `git add`.
+#   (uploaded via SFTP in --json mode) or read from stdin, then `git add`.
 _git_cmd_resolve() {
   local site="$1" app_root="$2" path="${3:-}"; shift 3 2>/dev/null || true
   [[ -n "$path" ]] || die "Usage: server git resolve <site> <path> [--tmp <remote-file>]"

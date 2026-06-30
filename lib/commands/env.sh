@@ -123,7 +123,7 @@ cmd_env() {
       ok "Replaced ${server}:$(_env_file "$app_root")."
       ;;
     edit)
-      json_mode && die "'env edit' is interactive; use get/set or pull/push from the app."
+      json_mode && die "'env edit' is interactive; use get/set or pull/push in --json mode."
       _env_edit "$site" "$app_root" "$server"
       ;;
   esac

@@ -201,8 +201,8 @@ _render_healthcheck() {
 #   own from "composer not found", a missing PHP extension, a missing Node /
 #   package manager, etc.
 #
-#   The timeline reads: step ✖  →  Auto-fix ✔  →  step (retry) ✔ — which the
-#   desktop UI renders natively. Returns the final step's status.
+#   The timeline reads: step ✖  →  Auto-fix ✔  →  step (retry) ✔.
+#   Returns the final step's status.
 _deploy_try() {
   local label="$1" diagnoser="$2"; shift 2
   local run=() seen=0 a

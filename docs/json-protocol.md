@@ -1,14 +1,14 @@
 # server-manager — JSON event protocol (`--json`)
 
-This is the machine-readable contract the **Flutter desktop UI** drives over
-SSH. It lets a GUI run server-manager non-interactively and render live progress
-without parsing the human TTY output.
+This is the machine-readable output contract for `server --json`. It lets any
+client run server-manager non-interactively and render live progress without
+parsing the human TTY output.
 
 - **Contract version:** `1` (see `SRVMGR_JSON_CONTRACT` in `lib/core/json.sh`).
-  Bumped on any breaking change; the UI checks it at the `version` handshake and
-  refuses a mismatched backend.
-- **Transport:** the UI opens an SSH session to a Linux *control node* where
-  server-manager is installed and runs `server --json <command> [args]`. The
+  Bumped on any breaking change; a client checks it at the `version` handshake
+  and can refuse a mismatched backend.
+- **Transport:** run `server --json <command> [args]` directly, or over an SSH
+  session to a Linux *control node* where server-manager is installed. The
   control node SSHes out to the managed servers exactly as the CLI does today.
 
 ## Invocation
@@ -45,7 +45,7 @@ corrupts the stream.
 | `data`       | `kind`, `items` (array) **or** `value` (object)     | Query result payload |
 | `done`       | `ok` (bool)                                         | Terminal event (always last) |
 
-`step_start`/`step_end` share an `id` so the UI can correlate them and animate
+`step_start`/`step_end` share an `id` so a client can correlate them and animate
 each node's spinner → check/cross.
 
 ## Example: `server --json update clicketta.site`
@@ -64,7 +64,7 @@ each node's spinner → check/cross.
 
 ## The two-phase `add` wizard
 
-A GUI can't answer interactive prompts mid-flow, so `add` is split:
+A client can't answer interactive prompts mid-flow, so `add` is split:
 
 1. **Plan** — `server --json add --plan` runs only the read-only part (connect +
    discovery) and emits a form spec:
@@ -81,12 +81,12 @@ A GUI can't answer interactive prompts mid-flow, so `add` is split:
 
    Field `type`s: `domain`, `abspath`, `string`, `bool`, `enum` (+ `options`),
    `secret`. Optional `when` makes a field conditional on earlier answers so the
-   GUI can branch dynamically.
+   client can branch dynamically.
 
-2. **Apply** — the UI uploads the collected answers as JSON (via SFTP) and runs
+2. **Apply** — a client uploads the collected answers as JSON (via SFTP) and runs
    `server --json add --apply --answers <remote-file>`, which streams the normal
    event sequence above. If a required answer is missing the backend emits
-   `{"t":"need","id":"..."}` and the UI re-runs with it filled in.
+   `{"t":"need","id":"..."}` and a client re-runs with it filled in.
 
 ## Implementation notes
 
@@ -95,7 +95,7 @@ A GUI can't answer interactive prompts mid-flow, so `add` is split:
 - `lib/core/ui.sh` — the single output choke point. When `SRVMGR_JSON=1`,
   `section`/`step`/`step_capture`/`ok`/`warn`/`err`/`report_box`/`progress_bar`
   emit events instead of TTY text. **No command logic changed** — only the
-  presentation layer — so the human CLI and the GUI share one code path.
+  presentation layer — so the human CLI and the client share one code path.
 - `bin/server` — `--json` sets up fd 3 + the terminal `done` event (via an EXIT
   trap reflecting the exit status).
 
