@@ -275,6 +275,13 @@ SRVMGR_FILE_EOF
 EOF
 }
 
+_ui_fs_delete()   { ssh_sudo "rm -rf $(shq "$1")"; }
+_ui_fs_rename()   { ssh_sudo "mv $(shq "$1") $(shq "$2")"; }
+_ui_fs_mkdir()    { ssh_sudo "mkdir -p $(shq "$1")"; }
+_ui_fs_newfile()  { ssh_sudo "test -e $(shq "$1") || : > $(shq "$1")"; }
+# Stream a remote file to a local path (sudo-aware; no TTY, so binary-safe).
+_ui_fs_download() { ssh_sudo "cat $(shq "$1")" > "$2"; }
+
 # _ui_open_files — enter the file manager rooted at the site's app root.
 _ui_open_files() {
   ssh_use_server "$UI_SERVER" 2>/dev/null
@@ -322,16 +329,71 @@ _ui_edit_file() {
   rm -f "$tmp"
 }
 
+# _ui_fm_op <delete|rename|download> — act on the selected entry (skips "..").
+_ui_fm_op() {
+  local op="$1" t name
+  (( ${#UI_FILES[@]} )) || return 0
+  IFS=$'\t' read -r t name _ <<< "${UI_FILES[$UI_FSEL]}"
+  [[ "$name" == ".." ]] && return 0
+  local path="${UI_FM_PATH%/}/$name"
+  case "$op" in
+    delete)   _ui_run "Delete ${name}"   _ui_fm_delete   "$path" "$name" "$t"; _ui_load_files;;
+    rename)   _ui_run "Rename ${name}"   _ui_fm_rename   "$path" "$name";      _ui_load_files;;
+    download) _ui_run "Download ${name}" _ui_fm_download "$path" "$name" "$t";;
+  esac
+}
+
+_ui_fm_delete() {
+  local path="$1" name="$2" t="$3" what="file"
+  [[ "$t" == d ]] && what="directory (recursively)"
+  confirm "Delete ${name} — ${what}?" "n" || { info "Cancelled."; return 0; }
+  _ui_fs_delete "$path" && ok "Deleted ${name}." || err "Could not delete ${name}."
+}
+
+_ui_fm_rename() {
+  local path="$1" name="$2" new
+  new="$(ask "New name" "$name")"; new="${new##*/}"   # keep it in the same dir
+  [[ -n "$new" && "$new" != "$name" ]] || { info "Unchanged."; return 0; }
+  _ui_fs_rename "$path" "${UI_FM_PATH%/}/$new" && ok "Renamed to ${new}." || err "Could not rename."
+}
+
+_ui_fm_download() {
+  local path="$1" name="$2" t="$3" out
+  [[ "$t" == d ]] && { err "Pick a file to download (not a directory)."; return 0; }
+  out="$(ask "Save to (local path)" "./${name}")"; out="${out/#\~/$HOME}"
+  if _ui_fs_download "$path" "$out"; then ok "Downloaded to ${out}."; else err "Download failed."; fi
+}
+
+# _ui_fm_new — create a new file, or a directory when the name ends with '/'.
+_ui_fm_new() {
+  local name; name="$(ask_required "New name (end with / for a directory)")"
+  local target="${UI_FM_PATH%/}/${name%/}"
+  if [[ "$name" == */ ]]; then
+    _ui_fs_mkdir "$target" && ok "Created directory ${name}." || err "Could not create directory."
+  else
+    _ui_fs_newfile "$target" && ok "Created file ${name}." || err "Could not create file."
+  fi
+}
+
 # _ui_render_files — the file-browser view.
 _ui_render_files() {
   _ui_row "${C_BOLD}${C_CYAN} Files ${C_RESET}${C_GREY}${UI_DOMAIN}${C_RESET}"
   _ui_row "  ${C_GREY}${UI_FM_PATH}${C_RESET}"
   _ui_row ""
-  if (( ${#UI_FILES[@]} == 0 )); then
+  local total=${#UI_FILES[@]}
+  if (( total == 0 )); then
     _ui_row "  ${C_GREY}(empty or unreadable)${C_RESET}"
   else
+    # Viewport: render only the slice around the selection so long listings
+    # (e.g. vendor/) scroll instead of overflowing the screen.
+    local avail=$(( UI_ROWS - 7 )); (( avail < 3 )) && avail=3
+    local off=0
+    (( UI_FSEL >= avail )) && off=$(( UI_FSEL - avail + 1 ))
+    (( off > total - avail )) && off=$(( total - avail ))
+    (( off < 0 )) && off=0
+    local end=$(( off + avail )); (( end > total )) && end=$total
     local i t n s disp size line
-    for i in "${!UI_FILES[@]}"; do
+    for (( i=off; i<end; i++ )); do
       IFS=$'\t' read -r t n s <<< "${UI_FILES[$i]}"
       case "$t" in d) disp="${n}/";; l) disp="${n}@";; *) disp="$n";; esac
       size=""; [[ "$t" == f ]] && size="$(_metrics_human "$s")"
@@ -339,20 +401,26 @@ _ui_render_files() {
       if (( i == UI_FSEL )); then _ui_sel_row "> $line"
       else local x="  $line"; _ui_row "${x:0:UI_COLS}"; fi
     done
+    (( total > avail )) && _ui_row "  ${C_GREY}$(( off + 1 ))–${end} of ${total}${C_RESET}"
   fi
   _ui_row ""
-  _ui_row "${C_GREY}↑/↓ move · enter open/edit · ← up · esc back · q quit${C_RESET}"
+  _ui_row "${C_GREY}↑/↓ move · enter open · ← up · n new · m rename · d del · g get · r refresh · esc back${C_RESET}"
 }
 
 # _ui_key_files — input handler for the file browser. Returns non-zero to quit.
 _ui_key_files() {
   local k="$1" n=${#UI_FILES[@]} t name
   case "$k" in
-    up)    (( n )) && UI_FSEL=$(( (UI_FSEL - 1 + n) % n ));;
-    down)  (( n )) && UI_FSEL=$(( (UI_FSEL + 1) % n ));;
-    left)  _ui_fm_up;;
-    back)  UI_VIEW=menu;;
-    quit)  return 1;;
+    up)      (( n )) && UI_FSEL=$(( (UI_FSEL - 1 + n) % n ));;
+    down)    (( n )) && UI_FSEL=$(( (UI_FSEL + 1) % n ));;
+    left)    _ui_fm_up;;
+    back)    UI_VIEW=menu;;
+    quit)    return 1;;
+    refresh) _ui_load_files;;
+    char:d)  _ui_fm_op delete;;
+    char:m)  _ui_fm_op rename;;
+    char:g)  _ui_fm_op download;;
+    char:n)  _ui_run "New in ${UI_FM_PATH}" _ui_fm_new; _ui_load_files;;
     enter|right|char:e)
       (( n )) || return 0
       IFS=$'\t' read -r t name _ <<< "${UI_FILES[$UI_FSEL]}"
