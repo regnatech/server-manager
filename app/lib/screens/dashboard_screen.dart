@@ -30,7 +30,7 @@ class DashboardScreen extends ConsumerWidget {
   Future<void> _confirmDeployAll(BuildContext context, WidgetRef ref) async {
     final bool? go = await showDialog<bool>(
       context: context,
-      builder: (BuildContext _) => AlertDialog(
+      builder: (BuildContext dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(Insets.radiusLg),
         ),
@@ -41,13 +41,13 @@ class DashboardScreen extends ConsumerWidget {
         ),
         actions: <Widget>[
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
             child: const Text('Cancel'),
           ),
           AppButton(
             label: 'Deploy all',
             icon: Icons.rocket_launch,
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
           ),
         ],
       ),

@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../models/plan_field.dart';
 import '../state/connection_provider.dart';
 import '../state/deploy_provider.dart';
+import '../state/sites_provider.dart';
 import '../theme/app_theme.dart';
 import '../transport/cli_event.dart';
 import '../widgets/app_button.dart';
@@ -30,6 +31,11 @@ class _AddWizardScreenState extends ConsumerState<AddWizardScreen> {
   AddPlan? _plan;
   final Map<String, String> _answers = <String, String>{};
   String? _error;
+
+  /// True when the control node has no target server registered yet, so the
+  /// wizard offers one-tap self-registration before configuring a site.
+  bool _needsServer = false;
+  bool _registering = false;
 
   @override
   void initState() {
@@ -57,6 +63,17 @@ class _AddWizardScreenState extends ConsumerState<AddWizardScreen> {
         setState(() => _error = 'Backend returned no plan.');
         return;
       }
+      // The plan only carries a 'server' field when a target server is
+      // registered; its absence means the control node has none yet.
+      final bool hasServer =
+          plan.fields.any((PlanField f) => f.id == 'server');
+      if (!hasServer) {
+        setState(() {
+          _plan = plan;
+          _needsServer = true;
+        });
+        return;
+      }
       // Seed defaults.
       for (final PlanField f in plan.fields) {
         if (f.value != null) _answers[f.id] = f.value!;
@@ -67,6 +84,52 @@ class _AddWizardScreenState extends ConsumerState<AddWizardScreen> {
       });
     } on Object catch (e) {
       if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  /// Registers the connected box as a managed target (self-hosting), then
+  /// re-discovers so the wizard can proceed.
+  Future<void> _registerSelf() async {
+    setState(() {
+      _registering = true;
+      _error = null;
+    });
+    try {
+      final cli = ref.read(cliServiceProvider);
+      bool ok = false;
+      final List<String> errs = <String>[];
+      await for (final CliEvent e in cli.registerSelf()) {
+        if (e is DoneEvent) {
+          ok = e.ok;
+        } else if (e is LogEvent && e.level == 'err') {
+          errs.add(e.msg);
+        } else if (e is StepEnd && !e.ok && e.err != null) {
+          errs.add(e.err!);
+        }
+      }
+      if (!mounted) return;
+      if (!ok) {
+        setState(() {
+          _registering = false;
+          _error = errs.isEmpty
+              ? 'Could not register this server.'
+              : errs.join('\n');
+        });
+        return;
+      }
+      ref.invalidate(serversProvider);
+      setState(() {
+        _registering = false;
+        _needsServer = false;
+      });
+      await _discover();
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() {
+          _registering = false;
+          _error = e.toString();
+        });
+      }
     }
   }
 
@@ -131,7 +194,14 @@ class _AddWizardScreenState extends ConsumerState<AddWizardScreen> {
       return _ErrorPane(
         key: const ValueKey<String>('error'),
         message: _error!,
-        onRetry: _discover,
+        onRetry: _needsServer ? _registerSelf : _discover,
+      );
+    }
+    if (_needsServer) {
+      return _NoServerPane(
+        key: const ValueKey<String>('no-server'),
+        registering: _registering,
+        onRegister: _registerSelf,
       );
     }
     switch (_step) {
@@ -280,6 +350,64 @@ class _DiscoverPane extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Empty-state shown when the control node has no target server registered.
+/// Offers one-tap self-registration (register the connected box itself).
+class _NoServerPane extends StatelessWidget {
+  const _NoServerPane({
+    super.key,
+    required this.registering,
+    required this.onRegister,
+  });
+
+  final bool registering;
+  final VoidCallback onRegister;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(Insets.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(
+                Icons.dns_outlined,
+                size: 56,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(height: Insets.lg),
+              Text(
+                'No server registered yet',
+                style: theme.textTheme.titleLarge,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: Insets.sm),
+              Text(
+                'Before adding a site, register a target server. To host sites '
+                'on this machine, register it as its own target.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: Insets.xl),
+              AppButton(
+                label: 'Register this server',
+                icon: Icons.add_link,
+                loading: registering,
+                onPressed: registering ? null : onRegister,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

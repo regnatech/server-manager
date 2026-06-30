@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -44,6 +45,9 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
   bool _succeeded = false;
   String? _error;
 
+  /// Connections previously saved via "Remember this connection".
+  List<ConnectionProfile> _saved = const <ConnectionProfile>[];
+
   @override
   void initState() {
     super.initState();
@@ -56,7 +60,49 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       _auth = AuthMethod.password;
       _password.text = 'correct-horse-battery';
       _step = (int.tryParse(step) ?? 0).clamp(0, _stepTitles.length - 1);
+      return;
     }
+    _loadSaved();
+  }
+
+  /// Loads remembered profiles from the OS vault so they can be offered for
+  /// one-tap reconnection.
+  Future<void> _loadSaved() async {
+    final List<ConnectionProfile> profiles =
+        await ref.read(connectionStoreProvider).loadProfiles();
+    if (!mounted) return;
+    setState(() => _saved = profiles);
+  }
+
+  /// Pre-fills the form from a saved [profile], pulling its secret back out of
+  /// the vault, and jumps straight to the Confirm step.
+  Future<void> _useSaved(ConnectionProfile profile) async {
+    final String? secret =
+        await ref.read(connectionStoreProvider).readSecret(profile);
+    if (!mounted) return;
+    setState(() {
+      _host.text = profile.host;
+      _port.text = profile.port.toString();
+      _user.text = profile.username;
+      _auth = profile.authMethod;
+      _keyPath = profile.keyPath;
+      _keyPem = null; // re-read from disk at connect time
+      if (profile.authMethod == AuthMethod.password) {
+        _password.text = secret ?? '';
+      } else {
+        _passphrase.text = secret ?? '';
+      }
+      _remember = true;
+      _error = null;
+      _forward = true;
+      _step = _stepTitles.length - 1;
+    });
+  }
+
+  /// Forgets a saved [profile] and its secret.
+  Future<void> _forget(ConnectionProfile profile) async {
+    await ref.read(connectionStoreProvider).deleteProfile(profile.id);
+    await _loadSaved();
   }
 
   @override
@@ -133,6 +179,20 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       authMethod: _auth,
       keyPath: _keyPath,
     );
+
+    // For a remembered key profile only the path is stored, so re-read the PEM
+    // from disk if we don't already have its contents in memory.
+    if (_auth == AuthMethod.key && _keyPem == null && _keyPath != null) {
+      try {
+        _keyPem = await File(_keyPath!).readAsString();
+      } on Object catch (e) {
+        setState(() {
+          _connecting = false;
+          _error = 'Could not read key file at $_keyPath — $e';
+        });
+        return;
+      }
+    }
 
     final ConnectionCredentials creds = ConnectionCredentials(
       profile: profile,
@@ -254,6 +314,20 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
+        if (_saved.isNotEmpty) ...<Widget>[
+          const SectionHeader(
+            title: 'Saved connections',
+            subtitle: 'Reconnect with one tap',
+          ),
+          const SizedBox(height: Insets.sm),
+          for (final ConnectionProfile p in _saved)
+            _SavedConnectionTile(
+              profile: p,
+              onUse: () => _useSaved(p),
+              onForget: () => _forget(p),
+            ),
+          const SizedBox(height: Insets.lg),
+        ],
         const SectionHeader(
           title: 'Server',
           subtitle: 'Where your server-manager control node lives',
@@ -635,6 +709,48 @@ class _Brand extends StatelessWidget {
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),
       ],
+    );
+  }
+}
+
+/// A tappable card for a remembered connection: tap to load it into the form,
+/// or use the trailing button to forget it.
+class _SavedConnectionTile extends StatelessWidget {
+  const _SavedConnectionTile({
+    required this.profile,
+    required this.onUse,
+    required this.onForget,
+  });
+
+  final ConnectionProfile profile;
+  final VoidCallback onUse;
+  final VoidCallback onForget;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: Insets.sm),
+      child: ListTile(
+        onTap: onUse,
+        leading: Icon(
+          profile.authMethod == AuthMethod.key
+              ? Icons.vpn_key_outlined
+              : Icons.lock_outline,
+          color: theme.colorScheme.primary,
+        ),
+        title: Text('${profile.host}:${profile.port}'),
+        subtitle: Text(
+          profile.username,
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        trailing: IconButton(
+          tooltip: 'Forget',
+          icon: const Icon(Icons.delete_outline),
+          onPressed: onForget,
+        ),
+      ),
     );
   }
 }

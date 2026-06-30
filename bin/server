@@ -142,6 +142,7 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
 ${C_BOLD}SERVER COMMANDS${C_RESET}
   connect <name> user@host Register a server (probes SSH + sudo). Add -p to
                            authenticate by password instead of an SSH key.
+  connect-self [name]      Register THIS machine as a managed target (self-host)
   use <name>               Set the default server
   servers                  List registered servers
 
@@ -177,6 +178,7 @@ main() {
       fi;;
 
     connect)        cmd_server_connect "$@";;
+    connect-self)   cmd_server_connect_self "$@";;
     use)            cmd_server_use "$@";;
     servers)        cmd_server_servers "$@";;
 

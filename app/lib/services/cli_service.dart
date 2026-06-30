@@ -176,6 +176,10 @@ abstract class CliService {
   /// [domain] scopes to a site; omit it for the server-level history.
   Stream<CliEvent> auditHistory([String? domain]);
 
+  /// `server --json connect-self [name]` → registers the connected box as a
+  /// managed target (self-hosting). Streams step events then a [DoneEvent].
+  Stream<CliEvent> registerSelf([String? name]);
+
   /// `server --json add --plan` → emits a plan [DataEvent].
   Stream<CliEvent> addPlan();
 
@@ -428,6 +432,12 @@ class LiveCliService implements CliService {
         'audit',
         'history',
         if (domain != null && domain.isNotEmpty) domain,
+      ]);
+
+  @override
+  Stream<CliEvent> registerSelf([String? name]) => _stream(<String>[
+        'connect-self',
+        if (name != null && name.trim().isNotEmpty) name.trim(),
       ]);
 
   @override

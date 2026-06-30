@@ -1658,6 +1658,15 @@ class DemoCliService implements CliService {
   }
 
   @override
+  Stream<CliEvent> registerSelf([String? name]) async* {
+    yield const StepStart(id: 'auth', label: 'Authorizing key for localhost');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    yield const StepEnd(id: 'auth', ok: true, dur: 0.3);
+    yield const LogEvent(level: 'ok', msg: 'Connected as root.');
+    yield const DoneEvent(ok: true);
+  }
+
+  @override
   Stream<CliEvent> addPlan() async* {
     await Future<void>.delayed(const Duration(milliseconds: 400));
     yield DataEvent(kind: 'plan', value: DemoData.addPlan);

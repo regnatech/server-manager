@@ -253,6 +253,80 @@ cmd_server_connect() {
   ok "Server '${name}' registered."
 }
 
+# _authorize_self_key <private-key> — append the matching public key to this
+# user's authorized_keys so key-based SSH to localhost succeeds. Idempotent.
+_authorize_self_key() {
+  local key="$1" pub
+  pub="$(cat "$key.pub")" || return 1
+  install -d -m 700 "$HOME/.ssh" || return 1
+  touch "$HOME/.ssh/authorized_keys" || return 1
+  chmod 600 "$HOME/.ssh/authorized_keys" || return 1
+  grep -qxF "$pub" "$HOME/.ssh/authorized_keys" 2>/dev/null \
+    || printf '%s\n' "$pub" >> "$HOME/.ssh/authorized_keys"
+}
+
+# ---------------------------------------------------------------------------
+# `server connect-self [name]` — register THIS machine as a managed target,
+# reachable over SSH at 127.0.0.1. Non-interactive: since we already have shell
+# access here, we generate (if needed) and self-authorize an SSH key so key
+# login to localhost works under BatchMode. This is what the GUI's one-tap
+# "Register this server" calls when self-managing a single box.
+# ---------------------------------------------------------------------------
+cmd_server_connect_self() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    name="$(hostname -s 2>/dev/null || true)"
+    [[ -n "$name" ]] || name="local"
+  fi
+  config_init_local
+
+  local user; user="$(id -un)"
+  local host="127.0.0.1" port=22
+
+  banner "connect-self ${name}"
+
+  local key
+  key="$(_local_keypair)" || die "Could not obtain an SSH key."
+  step "Authorizing key for localhost" _authorize_self_key "$key" \
+    || die "Could not set up key login to localhost."
+
+  local file="$SRVMGR_SERVERS_DIR/${name}.conf"
+  kv_set "$file" host "$host"
+  kv_set "$file" user "$user"
+  kv_set "$file" port "$port"
+  kv_set "$file" auth key
+  kv_set "$file" identity_file "$key"
+  chmod 600 "$file" 2>/dev/null || true
+
+  ssh_use_server "$name"
+  local who; who="$(ssh_probe || true)"
+  if [[ -z "$who" ]]; then
+    rm -f "$file"
+    die "Could not SSH to ${user}@127.0.0.1 — is sshd running and listening on port ${port}?"
+  fi
+  ok "Connected as ${who}."
+
+  if [[ "$who" == "root" ]]; then
+    kv_set "$file" become none
+    ok "Login is root — no sudo needed."
+  elif ssh_probe_sudo; then
+    kv_set "$file" become sudo
+    ok "Passwordless sudo available."
+  else
+    kv_set "$file" become sudo
+    warn "Passwordless sudo is NOT available for ${who}; provisioning may fail."
+    say "  Grant NOPASSWD sudo (/etc/sudoers.d/${who}: ${who} ALL=(ALL) NOPASSWD:ALL) or run as root."
+  fi
+
+  if [[ -z "$(registry_default)" ]]; then
+    global_set default_server "$name"
+    info "Set '${name}' as the default server."
+  fi
+
+  ssh_close
+  ok "This server is registered as '${name}'."
+}
+
 # ---------------------------------------------------------------------------
 # `server use <name>` — set the default server.
 # ---------------------------------------------------------------------------
