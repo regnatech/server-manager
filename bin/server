@@ -108,6 +108,9 @@ ${C_BOLD}${C_MAGENTA}server-manager${C_RESET} ${C_GREY}v${SRVMGR_VERSION}${C_RES
 ${C_BOLD}USAGE${C_RESET}
   server <command> [arguments] [--server <name>] [-y]
 
+${C_BOLD}INTERACTIVE${C_RESET}
+  ui                       Full-screen terminal control panel (manage everything)
+
 ${C_BOLD}SITE COMMANDS${C_RESET}
   add [domain] [root]      Wizard: discover, configure and provision a new site
   update <site>            Intelligent zero-downtime deploy (pull, build, migrate, restart)
@@ -186,6 +189,7 @@ main() {
     use)            cmd_server_use "$@";;
     servers)        cmd_server_servers "$@";;
 
+    ui)             _require_cmd_impl cmd_ui "$cmd";       cmd_ui "$@";;
     add)            _require_cmd_impl cmd_add "$cmd";      cmd_add "$@";;
     upload)         _require_cmd_impl cmd_upload "$cmd";   cmd_upload "$@";;
     env)            _require_cmd_impl cmd_env "$cmd";      cmd_env "$@";;

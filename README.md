@@ -142,6 +142,7 @@ server rollback clicketta.site
 
 | Command | Description |
 |---|---|
+| `server ui` | Full‑screen terminal control panel — manage everything interactively. |
 | `server connect <name> user@host[:port] [-i key] [-p]` | Register a server (probes SSH + sudo). |
 | `server connect-self [name]` | Register the current machine as a managed target (self‑host). |
 | `server use <name>` | Set the default server. |
