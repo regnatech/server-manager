@@ -93,7 +93,7 @@ _git_branches_json() {
 cmd_git() {
   local sub="${1:-}"; [[ $# -gt 0 ]] && shift
   local site="${1:-}"; [[ $# -gt 0 ]] && shift
-  [[ -n "$site" ]] || die "Usage: server git <log|status|branches|fetch|checkout|pull|push|deploy> <site> [args]"
+  [[ -n "$site" ]] || die "Usage: server git <log|status|branches|fetch|checkout|pull|push|deploy|deploy-key> <site> [args]"
 
   local server; server="$(registry_resolve_for_site "$site" "$OPT_SERVER")"
   ssh_use_server "$server"
@@ -121,6 +121,7 @@ cmd_git() {
               local tagcmd="git${ao} tag $(shq "$tn")"; [[ -n "$tm" ]] && tagcmd="git${ao} tag -a $(shq "$tn") -m $(shq "$tm")"
               step "Creating tag ${tn}" _git_run "$app_root" "$tagcmd" || die "tag failed."
               step "Pushing tag ${tn}"  _git_run "$app_root" "git push origin $(shq "refs/tags/$tn")" || warn "Tag created locally but push failed.";;
+    deploy-key) _git_cmd_deploy_key "$site" "$app_root";;
     pr)       _git_cmd_pr "$site" "$app_root" "$@";;
     merge)    _git_cmd_merge "$site" "$app_root" "${1:-}";;
     resolve)  _git_cmd_resolve "$site" "$app_root" "$@";;
@@ -318,4 +319,76 @@ _git_cmd_deploy() {
   step "Fetching origin"          _git_run "$app_root" "git fetch --all --prune" || die "fetch failed."
   step "Checking out ${branch}"   _git_run "$app_root" "git checkout $(shq "$branch")" || die "checkout failed."
   cmd_update "$site"
+}
+
+# _git_parse_repo <remote> -> "org/repo" (no .git) for github HTTPS/SSH/aliased
+# remotes; echoes the input unchanged when it isn't recognisable.
+_git_parse_repo() {
+  local r="${1%.git}"
+  case "$r" in
+    https://github.com/*)   printf '%s' "${r#https://github.com/}";;
+    ssh://git@github.com/*) printf '%s' "${r#ssh://git@github.com/}";;
+    git@github.com:*)       printf '%s' "${r#git@github.com:}";;
+    git@github.com-*:*)     printf '%s' "${r#*:}";;
+    *)                      printf '%s' "$r";;
+  esac
+}
+
+# server git deploy-key <site> — provision a per-repo SSH deploy key on the
+# site's server, switch the remote to SSH (via a github.com host alias so each
+# repo keeps its own key), and print the public key to register on GitHub.
+_git_cmd_deploy_key() {
+  local site="$1" app_root="$2"
+  [[ -n "$SITE_GIT_REMOTE" ]] || die "Site '${site}' has no git remote configured."
+  case "$SITE_GIT_REMOTE" in
+    *github.com*) :;;
+    *) die "Deploy keys are wired for GitHub remotes; '${SITE_GIT_REMOTE}' isn't one.";;
+  esac
+
+  local repo; repo="$(_git_parse_repo "$SITE_GIT_REMOTE")"
+  local slug="${repo//\//-}"; slug="${slug//[^a-zA-Z0-9_-]/-}"
+  local alias_host="github.com-${slug}"
+  local new_remote="git@${alias_host}:${repo}.git"
+
+  banner "deploy-key — ${site} (${repo})"
+
+  # Generate the key + ssh config + known_hosts on the server; echo the pubkey.
+  local out
+  out="$(ssh_script <<EOF
+set -e
+umask 077
+mkdir -p "\$HOME/.ssh"
+key="\$HOME/.ssh/sm_deploy_${slug}"
+[ -f "\$key" ] || ssh-keygen -t ed25519 -N '' -C "server-manager (${repo})" -f "\$key" -q
+touch "\$HOME/.ssh/known_hosts"
+ssh-keygen -F github.com >/dev/null 2>&1 || ssh-keyscan -t rsa,ed25519 github.com 2>/dev/null >> "\$HOME/.ssh/known_hosts"
+cfg="\$HOME/.ssh/config"; touch "\$cfg"; chmod 600 "\$cfg"
+grep -qxF "Host ${alias_host}" "\$cfg" || printf '\n%s\n  %s\n  %s\n  %s\n  %s\n' "Host ${alias_host}" "HostName github.com" "User git" "IdentityFile \$key" "IdentitiesOnly yes" >> "\$cfg"
+cat "\$key.pub"
+EOF
+)" || die "Could not set up the deploy key on '${_SSH_NAME}'."
+  local pub; pub="$(printf '%s\n' "$out" | grep '^ssh-' | head -1)"
+  [[ -n "$pub" ]] || die "Failed to read the generated public key."
+
+  step "Switching remote to SSH" remote_site_set_kv "$site" git_remote "$new_remote" \
+    || die "Could not update the site's git remote."
+  if deploy_git_valid "$app_root"; then
+    _git_run "$app_root" "git remote set-url origin $(shq "$new_remote")" \
+      || warn "Updated the saved remote, but could not retarget origin on the existing checkout."
+  fi
+
+  if json_mode; then
+    ui_emit "{\"t\":\"data\",$(json_kv_string kind deploy_key),$(json_kv_raw value "{$(json_kv_string repo "$repo"),$(json_kv_string remote "$new_remote"),$(json_kv_string public_key "$pub"),$(json_kv_string add_url "https://github.com/${repo}/settings/keys/new")}")}"
+  else
+    section "Add this deploy key to GitHub"
+    say ""
+    say "  ${pub}"
+    say ""
+    say "  1. Open: https://github.com/${repo}/settings/keys/new"
+    say "  2. Title: server-manager (${site})"
+    say "  3. Tick 'Allow write access' only if you push from the server (deploys only pull)."
+    say ""
+    info "Then deploy with: server update ${site}"
+  fi
+  ok "Deploy key ready for ${repo}."
 }

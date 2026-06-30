@@ -176,6 +176,24 @@ site_load() {
   [[ -n "$SITE_DOMAIN" ]]
 }
 
+# remote_site_set_kv <domain> <key> <value> — update a single key in the site
+# conf, preserving every other line. Appends the key if it isn't present.
+remote_site_set_kv() {
+  local domain="$1" key="$2" value="$3"
+  local raw; raw="$(remote_site_load "$domain")" || return 1
+  [[ -n "$raw" ]] || return 1
+  local out="" line found=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "${key}="* ]]; then
+      out+="${key}=${value}"$'\n'; found=1
+    else
+      out+="${line}"$'\n'
+    fi
+  done <<<"$raw"
+  (( found )) || out+="${key}=${value}"$'\n'
+  printf '%s' "$out" | remote_site_write "$domain"
+}
+
 # remote_site_write <domain> < body — overwrite the site conf atomically
 # (root-owned). Reads the full key=value body from stdin on the control side
 # and embeds it into the remote script (the script itself is the remote's
