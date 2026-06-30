@@ -120,11 +120,13 @@ ssh_script() {
   "${SSH_LAUNCHER[@]}" "${SSH_OPTS[@]}" "${_SSH_USER}@${_SSH_HOST}" "$runner"
 }
 
-# ssh_copy_to <local-path> <remote-path> — scp a file up (reuses the master).
+# ssh_copy_to <local-path> <remote-path> [--recursive] — scp a file (or, with
+# --recursive, a directory) up, reusing the master.
 ssh_copy_to() {
-  local src="$1" dst="$2"
+  local src="$1" dst="$2" recursive="${3:-}"
   _ssh_opts
   local scp_opts=(-o "ControlPath=$SSH_CM_DIR/cm-srvmgr-%r@%h:%p" -P "$_SSH_PORT")
+  [[ "$recursive" == "--recursive" ]] && scp_opts+=(-r)
   [[ "$_SSH_AUTH" != "password" && -n "$_SSH_IDENTITY" ]] && scp_opts+=(-i "$_SSH_IDENTITY")
   "${SCP_LAUNCHER[@]}" "${scp_opts[@]}" "$src" "${_SSH_USER}@${_SSH_HOST}:${dst}"
 }

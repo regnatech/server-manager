@@ -93,14 +93,14 @@ cmd_update() {
       -- deploy_composer "$app_root" \
     || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "composer install failed."
 
-  # 8. Frontend build (auto, using the package manager from the lockfile).
+  # 8. Frontend build. Always attempt it: deploy_node no-ops when there's no
+  #    package.json, and auto-detects the package manager from the lockfile when
+  #    the site config doesn't record one (e.g. first deploy after `add`).
   #    Self-healing: diagnose the failure and provision Node.js / the package
   #    manager as needed, then retry.
-  if [[ -n "$SITE_NODE_PM" ]]; then
-    _deploy_try "Building frontend (${SITE_NODE_PM})" _diagnose_node \
-        -- deploy_node "$app_root" "$SITE_NODE_PM" \
-      || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Frontend build failed."
-  fi
+  _deploy_try "Building frontend${SITE_NODE_PM:+ (${SITE_NODE_PM})}" _diagnose_node \
+      -- deploy_node "$app_root" "$SITE_NODE_PM" \
+    || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Frontend build failed."
 
   # 9. Laravel migrate + cache rebuild.
   if _is_laravel_like "$fw"; then
@@ -265,7 +265,12 @@ _diagnose_composer() {
 
 # _diagnose_node <logfile> — pick a targeted fix for a failed frontend build.
 _diagnose_node() {
-  local out; out="$(cat "$1" 2>/dev/null)" pm="${SITE_NODE_PM:-npm}"
+  local out; out="$(cat "$1" 2>/dev/null)"
+  # Prefer the package manager deploy_node actually used (it reports it in the
+  # "package manager '<pm>' not found" message after auto-detecting from the
+  # lockfile); fall back to the configured one, then npm.
+  local pm; pm="$(printf '%s' "$out" | sed -n "s/.*package manager '\([^']*\)'.*/\1/p" | head -1)"
+  [[ -n "$pm" ]] || pm="${SITE_NODE_PM:-npm}"
 
   # Out of disk — not something we can auto-fix.
   if printf '%s' "$out" | grep -qiE 'ENOSPC|no space left'; then

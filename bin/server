@@ -119,6 +119,9 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   ssl <site>               Issue or renew the Let's Encrypt certificate
   list                     List managed sites and their health
   import <domain> <root>   Adopt an already-deployed site without deploying
+  upload <site> <local> <remote>  Copy a local file/dir to the site's server
+  env <site> [action]      Manage the remote .env: show | get | set | unset |
+                           pull | push | edit
   logs <site> [type]       Tail remote logs (nginx|php|laravel|queue)
   php <site> [args...]     Run artisan/php on the site, or show/switch PHP version
   db import [site] [file]  Import a .sql/.sql.gz dump into a site's database
@@ -184,6 +187,8 @@ main() {
     servers)        cmd_server_servers "$@";;
 
     add)            _require_cmd_impl cmd_add "$cmd";      cmd_add "$@";;
+    upload)         _require_cmd_impl cmd_upload "$cmd";   cmd_upload "$@";;
+    env)            _require_cmd_impl cmd_env "$cmd";      cmd_env "$@";;
     update)         _require_cmd_impl cmd_update "$cmd";   cmd_update "$@";;
     diff)           _require_cmd_impl cmd_diff "$cmd";     cmd_diff "$@";;
     release)        _require_cmd_impl cmd_release "$cmd";  cmd_release "$@";;

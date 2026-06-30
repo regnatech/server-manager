@@ -140,7 +140,7 @@ EOF
   # Reuse the normal build steps, pointed at the new release dir.
   _deploy_try "Installing Composer dependencies" _diagnose_composer -- deploy_composer "$rel" \
     || die "composer install failed."
-  [[ -n "$SITE_NODE_PM" ]] && { _deploy_try "Building frontend (${SITE_NODE_PM})" _diagnose_node -- deploy_node "$rel" "$SITE_NODE_PM" || die "Frontend build failed."; }
+  _deploy_try "Building frontend${SITE_NODE_PM:+ (${SITE_NODE_PM})}" _diagnose_node -- deploy_node "$rel" "$SITE_NODE_PM" || die "Frontend build failed."
   _is_laravel_like "$SITE_FRAMEWORK" && { step "Running migrations" deploy_laravel_migrate "$rel" "$SITE_PHP_VERSION" || die "Migrations failed."; }
 
   step "Switching 'current' → ${ts}" ssh_exec "ln -sfn $(shq "$rel") $(shq "$root/current")" || die "Atomic switch failed."
