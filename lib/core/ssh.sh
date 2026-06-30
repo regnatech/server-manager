@@ -92,7 +92,10 @@ ssh_exec() {
 # the common per-user / local tool locations that non-login SSH shells miss.
 ssh_app_exec() {
   local dir="$1" cmd="$2"
-  ssh_exec "export PATH=\"\$HOME/.local/bin:\$HOME/bin:\$HOME/.composer/vendor/bin:\$HOME/.config/composer/vendor/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; cd $(shq "$dir") && { $cmd ; }"
+  # Terminate the group with a newline (not " ; }"): a multi-line $cmd ending in
+  # a newline would otherwise produce "<newline> ; }" — a syntax error.
+  ssh_exec "export PATH=\"\$HOME/.local/bin:\$HOME/bin:\$HOME/.composer/vendor/bin:\$HOME/.config/composer/vendor/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; cd $(shq "$dir") && { $cmd
+}"
 }
 
 # ssh_sudo <command-string> — run with privilege escalation per server record.
@@ -140,7 +143,8 @@ ssh_interactive() {
 # directory with the augmented app PATH.
 ssh_app_interactive() {
   local dir="$1" cmd="$2"
-  ssh_interactive "export PATH=\"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$PATH\"; cd $(shq "$dir") && { $cmd ; }"
+  ssh_interactive "export PATH=\"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$PATH\"; cd $(shq "$dir") && { $cmd
+}"
 }
 
 # ssh_close — drop the master connection for the selected server. This only
