@@ -71,6 +71,21 @@ killasgroup=true
 redirect_stderr=true
 stdout_logfile=\${app_root}/storage/logs/horizon.log
 SUP
+elif [ "\$mode" = messenger ]; then
+  mkdir -p "\${app_root}/var/log" 2>/dev/null || true
+  cat > "\$conf" <<SUP
+[program:\${slug}-messenger]
+process_name=%(program_name)s_%(process_num)02d
+command=\${php_bin} \${app_root}/bin/console messenger:consume async --time-limit=3600 --memory-limit=256M
+directory=\${app_root}
+user=\${run_user}
+numprocs=2
+autostart=true
+autorestart=true
+stopwaitsecs=3600
+redirect_stderr=true
+stdout_logfile=\${app_root}/var/log/messenger.log
+SUP
 else
   cat > "\$conf" <<SUP
 [program:\${slug}-worker]
@@ -102,7 +117,7 @@ workers_status() {
   local slug="$1"
   ssh_sudo "
     command -v supervisorctl >/dev/null 2>&1 || { echo 'supervisor is not installed'; exit 0; }
-    out=\$(supervisorctl status 2>/dev/null | grep -E \"^$slug-(worker|horizon)\" || true)
+    out=\$(supervisorctl status 2>/dev/null | grep -E \"^$slug-(worker|horizon|messenger)\" || true)
     [ -n \"\$out\" ] && echo \"\$out\" || echo 'no worker configured for this site'
   "
 }
@@ -112,7 +127,7 @@ workers_restart() {
   local slug="$1"
   ssh_sudo "
     command -v supervisorctl >/dev/null 2>&1 || { echo 'supervisor not installed' >&2; exit 1; }
-    progs=\$(supervisorctl status 2>/dev/null | grep -oE \"^$slug-(worker|horizon)[^ ]*\" | sed 's/:.*//' | sort -u)
+    progs=\$(supervisorctl status 2>/dev/null | grep -oE \"^$slug-(worker|horizon|messenger)[^ ]*\" | sed 's/:.*//' | sort -u)
     [ -n \"\$progs\" ] || { echo 'no worker configured for this site' >&2; exit 1; }
     for p in \$progs; do supervisorctl restart \"\$p\" >/dev/null 2>&1 || true; done
     echo \"restarted: \$(echo \$progs | tr '\n' ' ')\"
@@ -126,6 +141,7 @@ workers_remove() {
     conf=/etc/supervisor/conf.d/server-manager-$slug.conf
     if command -v supervisorctl >/dev/null 2>&1; then
       supervisorctl stop \"$slug-worker:*\" >/dev/null 2>&1 || true
+      supervisorctl stop \"$slug-messenger:*\" >/dev/null 2>&1 || true
       supervisorctl stop \"$slug-horizon\" >/dev/null 2>&1 || true
     fi
     rm -f \"\$conf\"

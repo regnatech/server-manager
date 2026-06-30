@@ -161,6 +161,27 @@ command -v unzip >/dev/null 2>&1 && echo "unzip installed"
 EOF
 }
 
+# toolchain_ensure_redis — install + start a Redis server (Horizon/queues need
+# one). Idempotent: a no-op when redis-server is already present.
+toolchain_ensure_redis() {
+  ssh_script --sudo <<'EOF'
+set -e
+if command -v redis-server >/dev/null 2>&1; then
+  systemctl enable --now redis-server 2>/dev/null || systemctl enable --now redis 2>/dev/null || true
+  echo "redis already present: $(redis-server --version 2>/dev/null | head -1)"
+  exit 0
+fi
+if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y redis-server
+  systemctl enable --now redis-server 2>/dev/null || true
+elif command -v dnf >/dev/null 2>&1; then dnf install -y redis; systemctl enable --now redis 2>/dev/null || true
+elif command -v yum >/dev/null 2>&1; then yum install -y redis; systemctl enable --now redis 2>/dev/null || true
+else echo "no supported package manager to install redis" >&2; exit 1; fi
+command -v redis-server >/dev/null 2>&1 || { echo "redis install failed" >&2; exit 1; }
+echo "redis installed: $(redis-server --version 2>/dev/null | head -1)"
+EOF
+}
+
 # toolchain_ensure_git — make sure git is on PATH (install if missing).
 toolchain_ensure_git() {
   ssh_script --sudo <<'EOF'

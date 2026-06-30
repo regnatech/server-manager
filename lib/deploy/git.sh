@@ -46,16 +46,19 @@ deploy_git_clone() {
   ssh_app_exec "$app_root" "git init -q && { git remote get-url origin >/dev/null 2>&1 || git remote add origin $(shq "$remote"); } && git fetch --depth 1 $(shq "$auth") $(shq "$branch") && git checkout -f -B $(shq "$branch") FETCH_HEAD"
 }
 
-# deploy_git_pull <app_root> <branch> [remote] — fast-forward to the branch tip.
+# deploy_git_pull <app_root> <branch> [remote] — update the checkout to the
+# remote branch tip. A managed checkout is a deploy target, not a dev tree, so
+# we hard-reset to the fetched commit: this discards any local changes (e.g. a
+# deploy-time `composer require`) so the next deploy never trips on a dirty tree.
 # When [remote] is a GitHub HTTPS URL and a token is configured, fetch through an
-# authenticated URL (keeping the token out of config); otherwise pull origin.
+# authenticated URL (keeping the token out of config); otherwise use origin.
 deploy_git_pull() {
   local app_root="$1" branch="$2" remote="${3:-}" auth=""
   [[ -n "$remote" ]] && auth="$(_deploy_git_auth_url "$remote")"
   if [[ -n "$auth" && "$auth" != "$remote" ]]; then
-    ssh_app_exec "$app_root" "git fetch $(shq "$auth") $(shq "$branch") && git checkout -f $(shq "$branch") && git merge --ff-only FETCH_HEAD"
+    ssh_app_exec "$app_root" "git fetch $(shq "$auth") $(shq "$branch") && git checkout -f -B $(shq "$branch") FETCH_HEAD"
   else
-    ssh_app_exec "$app_root" "git fetch --all --prune && git checkout $(shq "$branch") && git pull --ff-only origin $(shq "$branch")"
+    ssh_app_exec "$app_root" "git fetch --all --prune && git checkout -f -B $(shq "$branch") origin/$(shq "$branch")"
   fi
 }
 

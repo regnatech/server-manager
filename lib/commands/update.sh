@@ -93,6 +93,14 @@ cmd_update() {
       -- deploy_composer "$app_root" \
     || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "composer install failed."
 
+  # 7b. Auto-wire production services for Laravel/Symfony: scheduler + workers,
+  #     and — for Laravel — install & run Horizon. Decides only what the user
+  #     hasn't already configured, and persists the decision.
+  if _is_laravel_like "$fw" || [[ "$fw" == symfony ]]; then
+    section "Production setup"
+    _update_autowire "$domain" "$app_root" "$php" "$fw"
+  fi
+
   # 8. Frontend build. Always attempt it: deploy_node no-ops when there's no
   #    package.json, and auto-detects the package manager from the lockfile when
   #    the site config doesn't record one (e.g. first deploy after `add`).
@@ -112,14 +120,15 @@ cmd_update() {
 
   # 10. (Re)apply scheduler + workers, then restart services.
   section "Services"
-  if _is_laravel_like "$fw"; then
-    local slug; slug="$(slugify "$domain")"
-    [[ "$SITE_SCHEDULER" == 1 ]] && { step "Ensuring scheduler cron" workers_install_scheduler "$slug" "$app_root" "$php" || true; }
-    if [[ "$SITE_HORIZON" == 1 ]]; then
-      step "Ensuring Horizon worker" _upd_ensure_worker "$slug" "$app_root" "$php" horizon || true
-    elif [[ "$SITE_QUEUE" == 1 ]]; then
-      step "Ensuring queue worker" _upd_ensure_worker "$slug" "$app_root" "$php" queue || true
-    fi
+  local slug; slug="$(slugify "$domain")"
+  if _is_laravel_like "$fw" && [[ "$SITE_SCHEDULER" == 1 ]]; then
+    step "Ensuring scheduler cron" workers_install_scheduler "$slug" "$app_root" "$php" || true
+  fi
+  if [[ "$SITE_HORIZON" == 1 ]]; then
+    step "Ensuring Horizon worker" _upd_ensure_worker "$slug" "$app_root" "$php" horizon || true
+  elif [[ "$SITE_QUEUE" == 1 ]]; then
+    local wmode=queue; [[ "$fw" == symfony ]] && wmode=messenger
+    step "Ensuring ${wmode} worker" _upd_ensure_worker "$slug" "$app_root" "$php" "$wmode" || true
   fi
   if _is_laravel_like "$fw" || is_php_framework "$fw"; then
     step "Restarting PHP-FPM" deploy_restart_php_fpm "$php" || warn "PHP-FPM restart reported a problem."
@@ -176,6 +185,47 @@ cmd_update() {
 _upd_ensure_worker() {
   local slug="$1" app_root="$2" php="$3" mode="$4"
   workers_ensure_supervisor && workers_install_supervisor "$slug" "$app_root" "$php" "$mode"
+}
+
+# _update_autowire <domain> <app_root> <php> <framework>
+#   Make a Laravel/Symfony site production-ready without manual setup. Only
+#   decides what the operator hasn't already chosen (an empty flag), and
+#   persists each decision to the remote site config so it sticks. Explicit
+#   opt-outs are respected: scheduler=0 / horizon=0 / queue=1 are left alone.
+#     * Laravel/Statamic — scheduler on; Horizon as the worker (Redis ensured,
+#       and laravel/horizon installed automatically when the repo doesn't ship
+#       it), unless the operator chose plain queue or disabled Horizon.
+#     * Symfony — a messenger consumer worker when symfony/messenger is present.
+_update_autowire() {
+  local domain="$1" app_root="$2" php="$3" fw="$4"
+  if _is_laravel_like "$fw"; then
+    if [[ -z "$SITE_SCHEDULER" ]]; then
+      SITE_SCHEDULER=1; remote_site_set_kv "$domain" scheduler 1 || true
+      ok "Scheduler enabled (artisan schedule:run every minute)."
+    fi
+    # Horizon is the default Laravel worker unless plain queue was chosen or
+    # Horizon was explicitly turned off.
+    if [[ "$SITE_QUEUE" != 1 && "$SITE_HORIZON" != 0 ]]; then
+      step "Ensuring Redis" toolchain_ensure_redis || warn "Could not ensure Redis (Horizon needs it)."
+      if ! deploy_horizon_present "$app_root"; then
+        step "Installing Laravel Horizon" deploy_install_horizon "$app_root" "$php" \
+          || warn "Could not install Horizon — falling back to a plain queue worker."
+      fi
+      if deploy_horizon_present "$app_root"; then
+        [[ "$SITE_HORIZON" == 1 ]] || { SITE_HORIZON=1; remote_site_set_kv "$domain" horizon 1 || true; }
+      elif [[ -z "$SITE_QUEUE" ]]; then
+        SITE_QUEUE=1; remote_site_set_kv "$domain" queue 1 || true
+      fi
+    fi
+  elif [[ "$fw" == symfony ]]; then
+    if [[ -z "$SITE_QUEUE" ]]; then
+      local kind; kind="$(deploy_detect_worker "$app_root" "$fw")"
+      if [[ "$kind" == messenger ]]; then
+        SITE_QUEUE=1; remote_site_set_kv "$domain" queue 1 || true
+        ok "Messenger consumer worker enabled."
+      fi
+    fi
+  fi
 }
 
 # _render_healthcheck "<name|status|detail lines>"
