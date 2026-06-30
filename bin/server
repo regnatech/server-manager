@@ -9,7 +9,7 @@
 
 set -Eeuo pipefail
 
-SRVMGR_VERSION="0.1.0"
+SRVMGR_VERSION="0.1.1"
 
 # ---------------------------------------------------------------------------
 # Locate the install root (resolve symlinks so /usr/local/bin/server works).

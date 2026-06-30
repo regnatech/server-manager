@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check (bash -n)
+        run: |
+          for f in bin/server $(find lib -name '*.sh') tests/run.sh install.sh; do
+            bash -n "$f"
+          done
+
+      - name: Compile MCP server
+        run: python3 -m py_compile mcp/server_manager_mcp.py
+
+      - name: shellcheck (advisory)
+        continue-on-error: true
+        run: shellcheck -s bash bin/server $(find lib -name '*.sh') tests/run.sh install.sh
+
+      - name: Unit tests
+        run: make test

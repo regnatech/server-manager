@@ -113,7 +113,20 @@ _ui_render() {
     *)     _ui_render_sites;;
   esac
   UI_BUF+=$'\033[J'
+  _ui_badge
   printf '%s' "$UI_BUF"
+}
+
+# _ui_badge — pin a clickable "Powered by Regna Royal Tech" to the bottom-right
+# corner on every screen. Uses an OSC 8 hyperlink (clickable in supporting
+# terminals; plain text elsewhere).
+_ui_badge() {
+  local text="Powered by Regna Royal Tech" url="https://regna.tech"
+  local col=$(( UI_COLS - ${#text} - 1 )); (( col < 1 )) && col=1
+  UI_BUF+=$'\033['"${UI_ROWS};${col}H"            # move to bottom-right
+  UI_BUF+=$'\033[2;36m'                            # dim cyan
+  UI_BUF+=$'\033]8;;'"${url}"$'\033\\'"${text}"$'\033]8;;'$'\033\\'
+  UI_BUF+=$'\033[0m'
 }
 
 # _ui_site_line <i> — echo a plain, fixed-width columns line for site <i>.

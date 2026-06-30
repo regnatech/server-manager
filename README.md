@@ -4,7 +4,7 @@
 [![Bash](https://img.shields.io/badge/Bash-3.2%2B-121011?logo=gnubash&logoColor=white)](#requirements)
 [![Dependencies](https://img.shields.io/badge/deps-bash%20%2B%20ssh-informational)](#requirements)
 [![MCP ready](https://img.shields.io/badge/MCP-ready-7C3AED)](docs/mcp.md)
-[![Tests](https://img.shields.io/badge/tests-160%20passing-brightgreen)](tests/)
+[![CI](https://github.com/regnatech/server-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/regnatech/server-manager/actions/workflows/ci.yml)
 
 **Ship to a Linux server the way you wish you could — one wizard, then
 `server update`.** Zero‑config deploys, rollbacks, TLS, databases, queues and a
