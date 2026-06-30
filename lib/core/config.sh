@@ -154,7 +154,8 @@ site_load() {
   SITE_DOMAIN="" SITE_ROOT="" SITE_APP_ROOT="" SITE_FRAMEWORK="" \
   SITE_PHP_VERSION="" SITE_PHP_SOCKET="" SITE_GIT_REMOTE="" SITE_GIT_BRANCH="" \
   SITE_NODE_PM="" SITE_HTTPS="" SITE_LE_EMAIL="" SITE_UPSTREAM="" \
-  SITE_REDIS="" SITE_QUEUE="" SITE_HORIZON="" SITE_SCHEDULER="" SITE_OCTANE=""
+  SITE_REDIS="" SITE_QUEUE="" SITE_HORIZON="" SITE_SCHEDULER="" SITE_OCTANE="" \
+  SITE_WORKER_PROCS=""
   local raw; raw="$(remote_site_load "$domain")" || return 1
   [[ -n "$raw" ]] || return 1
   local line k v
@@ -170,7 +171,7 @@ site_load() {
       le_email)    SITE_LE_EMAIL="$v";;    upstream)    SITE_UPSTREAM="$v";;
       redis)       SITE_REDIS="$v";;       queue)       SITE_QUEUE="$v";;
       horizon)     SITE_HORIZON="$v";;     scheduler)   SITE_SCHEDULER="$v";;
-      octane)      SITE_OCTANE="$v";;
+      octane)      SITE_OCTANE="$v";;      worker_procs) SITE_WORKER_PROCS="$v";;
     esac
   done <<<"$raw"
   [[ -n "$SITE_DOMAIN" ]]

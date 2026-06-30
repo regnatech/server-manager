@@ -213,8 +213,19 @@ _update_autowire() {
       fi
       if deploy_horizon_present "$app_root"; then
         [[ "$SITE_HORIZON" == 1 ]] || { SITE_HORIZON=1; remote_site_set_kv "$domain" horizon 1 || true; }
+        # Size Horizon's pool to the server (once); the operator can change it
+        # later with `server worker <site> scale`.
+        if [[ -z "$SITE_WORKER_PROCS" ]]; then
+          local rec; rec="$(_autowire_rec "$app_root")"
+          if [[ -n "$rec" ]]; then
+            env_set_key "$app_root" HORIZON_MAX_PROCESSES "$rec" >/dev/null 2>&1 || true
+            SITE_WORKER_PROCS="$rec"; remote_site_set_kv "$domain" worker_procs "$rec" || true
+            ok "Horizon pool sized to ${rec} (recommended for this server)."
+          fi
+        fi
       elif [[ -z "$SITE_QUEUE" ]]; then
         SITE_QUEUE=1; remote_site_set_kv "$domain" queue 1 || true
+        _autowire_default_procs "$domain" "$app_root"
       fi
     fi
   elif [[ "$fw" == symfony ]]; then
@@ -223,9 +234,27 @@ _update_autowire() {
       if [[ "$kind" == messenger ]]; then
         SITE_QUEUE=1; remote_site_set_kv "$domain" queue 1 || true
         ok "Messenger consumer worker enabled."
+        _autowire_default_procs "$domain" "$app_root"
       fi
     fi
   fi
+}
+
+# _autowire_rec <app_root> — echo the recommended worker count (empty on failure).
+_autowire_rec() {
+  local rec; rec="$(workers_recommend_procs 2>/dev/null)"; rec="${rec%% *}"
+  [[ "$rec" =~ ^[0-9]+$ ]] && printf '%s' "$rec"
+}
+
+# _autowire_default_procs <domain> <app_root> — set worker_procs to the
+# recommendation when the operator hasn't picked one (supervisor numprocs).
+_autowire_default_procs() {
+  local domain="$1" app_root="$2"
+  [[ -n "$SITE_WORKER_PROCS" ]] && return 0
+  local rec; rec="$(_autowire_rec "$app_root")"
+  [[ -n "$rec" ]] || return 0
+  SITE_WORKER_PROCS="$rec"; remote_site_set_kv "$domain" worker_procs "$rec" || true
+  ok "Worker pool sized to ${rec} processes (recommended for this server)."
 }
 
 # _render_healthcheck "<name|status|detail lines>"

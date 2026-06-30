@@ -83,6 +83,11 @@ deploy_install_horizon() {
     export COMPOSER_MEMORY_LIMIT=-1
     composer require laravel/horizon --no-interaction --no-progress || exit 1
     \$PHP artisan horizon:install --no-interaction || true
+    # Make the worker pool size controllable from the .env so 'server worker
+    # <site> scale' can drive it without editing the repo's config by hand.
+    if [ -f config/horizon.php ] && ! grep -q HORIZON_MAX_PROCESSES config/horizon.php; then
+      sed -i -E \"s/('maxProcesses'[[:space:]]*=>[[:space:]]*)([0-9]+)/\\1(int) env('HORIZON_MAX_PROCESSES', \\2)/g\" config/horizon.php || true
+    fi
     echo 'horizon installed'
   "
 }

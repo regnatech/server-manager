@@ -45,13 +45,30 @@ workers_ensure_supervisor() {
   '
 }
 
-# workers_install_supervisor <slug> <app_root> <php_version> <mode>
-#   mode = horizon | queue. Writes a supervisor program and reloads it.
+# workers_recommend_procs — print "REC CORES MEMMB": a recommended worker
+# process count for the selected server plus the inputs behind it. Heuristic:
+# one worker per CPU core, capped by ~256 MB of RAM each (using 60% of total),
+# floored at 1.
+workers_recommend_procs() {
+  ssh_exec '
+    cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+    memkb=$(awk "/^MemTotal/{print \$2; exit}" /proc/meminfo 2>/dev/null || echo 1048576)
+    memmb=$((memkb/1024))
+    by_mem=$(( (memmb*60/100) / 256 )); [ "$by_mem" -lt 1 ] && by_mem=1
+    rec=$cores; [ "$by_mem" -lt "$rec" ] && rec=$by_mem; [ "$rec" -lt 1 ] && rec=1
+    printf "%s %s %s\n" "$rec" "$cores" "$memmb"
+  '
+}
+
+# workers_install_supervisor <slug> <app_root> <php_version> <mode> [procs]
+#   mode = horizon | queue | messenger. [procs] sets numprocs for queue/messenger
+#   (default 2); Horizon runs a single supervisor and manages its own pool.
 workers_install_supervisor() {
-  local slug="$1" app_root="$2" ver="$3" mode="$4"
+  local slug="$1" app_root="$2" ver="$3" mode="$4" procs="${5:-}"
+  [[ "$procs" =~ ^[0-9]+$ ]] && (( procs >= 1 )) || procs=2
   ssh_script --sudo <<EOF
 set -e
-app_root=$(shq "$app_root"); ver=$(shq "$ver"); slug=$(shq "$slug"); mode=$(shq "$mode")
+app_root=$(shq "$app_root"); ver=$(shq "$ver"); slug=$(shq "$slug"); mode=$(shq "$mode"); procs=$(shq "$procs")
 run_user="\$(stat -c '%U' "\$app_root" 2>/dev/null || echo www-data)"; [ -n "\$run_user" ] || run_user=www-data
 php_bin="\$(command -v php\${ver} 2>/dev/null || command -v php 2>/dev/null || echo /usr/bin/php)"
 mkdir -p /etc/supervisor/conf.d
@@ -79,7 +96,7 @@ process_name=%(program_name)s_%(process_num)02d
 command=\${php_bin} \${app_root}/bin/console messenger:consume async --time-limit=3600 --memory-limit=256M
 directory=\${app_root}
 user=\${run_user}
-numprocs=2
+numprocs=\${procs}
 autostart=true
 autorestart=true
 stopwaitsecs=3600
@@ -93,7 +110,7 @@ process_name=%(program_name)s_%(process_num)02d
 command=\${php_bin} \${app_root}/artisan queue:work --sleep=3 --tries=3 --max-time=3600
 directory=\${app_root}
 user=\${run_user}
-numprocs=2
+numprocs=\${procs}
 autostart=true
 autorestart=true
 stopwaitsecs=3600

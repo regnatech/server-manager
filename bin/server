@@ -130,7 +130,9 @@ ${C_BOLD}SITE COMMANDS${C_RESET}
   db import [site] [file]  Import a .sql/.sql.gz dump into a site's database
   db export [site] [file]  Dump a site's database to a local .sql.gz
   scheduler <site> [a]     Laravel scheduler cron: status (default) | on | off
-  worker <site> [action]   Workers: status (default) | setup | restart | logs | remove
+  worker <site> [action]   Workers: status (default) | setup | scale <n> |
+                           restart | logs | remove  (scale: set parallel procs;
+                           omit <n> to see the recommendation)
   cron <site> [action]     Cron jobs: list (default) | add "<sched>" "<cmd>" | remove <n>
   audit [site]             Security audit: findings + one-click fixes
   audit fix <id> [site]    Apply a single audit remediation by id

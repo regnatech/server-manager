@@ -54,15 +54,23 @@ cmd_worker() {
       section "Workers — ${site}"
       workers_status "$slug" | sed 's/^/  /' >&2;;
     setup|enable)
-      local mode="queue"; [[ "$SITE_HORIZON" == "1" ]] && mode="horizon"
-      if [[ "$SITE_HORIZON" != "1" && "$SITE_QUEUE" != "1" ]]; then
+      local mode="queue"
+      [[ "$SITE_HORIZON" == "1" ]] && mode="horizon"
+      [[ "$SITE_FRAMEWORK" == symfony ]] && mode="messenger"
+      if [[ "$SITE_HORIZON" != "1" && "$SITE_QUEUE" != "1" && "$SITE_FRAMEWORK" != symfony ]]; then
         say "  Worker type:  1) queue:work   2) Horizon" >&2
         case "$(ask "Choose" "1")" in 2) mode="horizon";; *) mode="queue";; esac
       fi
+      local procs=""
+      [[ "$mode" != horizon ]] && procs="$(_worker_choose_procs "$SITE_WORKER_PROCS")"
       step "Ensuring supervisor" workers_ensure_supervisor || warn "supervisor unavailable."
-      step "Configuring ${mode} worker" workers_install_supervisor "$slug" "$SITE_APP_ROOT" "$SITE_PHP_VERSION" "$mode" \
-        && { [[ "$mode" == horizon ]] && _sched_persist "$site" horizon 1 || _sched_persist "$site" queue 1; } \
+      step "Configuring ${mode} worker${procs:+ (${procs} processes)}" \
+        workers_install_supervisor "$slug" "$SITE_APP_ROOT" "$SITE_PHP_VERSION" "$mode" "$procs" \
+        && { [[ "$mode" == horizon ]] && _sched_persist "$site" horizon 1 \
+             || { _sched_persist "$site" queue 1; [[ -n "$procs" ]] && _sched_persist "$site" worker_procs "$procs"; }; } \
         && ok "Worker (${mode}) configured." || die "Could not configure the worker.";;
+    scale)
+      _worker_scale "$site" "$slug" "${3:-}";;
     restart)
       step "Restarting workers" workers_restart "$slug" || die "Could not restart workers.";;
     remove|off|disable)
@@ -71,8 +79,75 @@ cmd_worker() {
         && ok "Worker removed." || die "Could not remove the worker.";;
     logs)
       cmd_logs "$site" queue;;
-    *) die "Usage: server worker <site> [status|setup|restart|logs|remove]";;
+    *) die "Usage: server worker <site> [status|setup|scale <n>|restart|logs|remove]";;
   esac
+}
+
+# _worker_recommend — echo "REC CORES MEMMB" for the selected server (safe
+# fallback values if the probe fails).
+_worker_recommend() {
+  local line; line="$(workers_recommend_procs 2>/dev/null)"
+  [[ "${line%% *}" =~ ^[0-9]+$ ]] || line="2 ? ?"
+  printf '%s' "$line"
+}
+
+# _worker_choose_procs <current> — interactively pick a process count, defaulting
+# to <current> (or the recommendation). Honors -y / --json (uses the default).
+_worker_choose_procs() {
+  local current="$1" line rec cores mem def n
+  line="$(_worker_recommend)"; rec="${line%% *}"; cores="$(printf '%s' "$line" | awk '{print $2}')"; mem="$(printf '%s' "$line" | awk '{print $3}')"
+  def="${current:-$rec}"
+  if json_mode || [[ "${SRVMGR_ASSUME_YES:-0}" == "1" ]]; then printf '%s' "$def"; return; fi
+  say "  Recommended: ${C_BOLD}${rec}${C_RESET} processes ${C_GREY}(${cores} cores, ${mem} MB RAM)${C_RESET}" >&2
+  n="$(ask "How many worker processes?" "$def")"
+  [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )) || n="$def"
+  printf '%s' "$n"
+}
+
+# _worker_scale <site> <slug> <n> — set the worker process count. With no <n>,
+# show the current value and the recommendation. Laravel/Horizon is special:
+# Horizon manages its own pool via maxProcesses (config/horizon.php), so we
+# drive HORIZON_MAX_PROCESSES in the .env (the deploy makes the config honor it)
+# rather than supervisor numprocs.
+_worker_scale() {
+  local site="$1" slug="$2" n="$3"
+  local line rec cores mem; line="$(_worker_recommend)"
+  rec="${line%% *}"; cores="$(printf '%s' "$line" | awk '{print $2}')"; mem="$(printf '%s' "$line" | awk '{print $3}')"
+
+  if [[ -z "$n" ]]; then
+    section "Worker scale — ${site}"
+    if [[ "$SITE_HORIZON" == "1" ]]; then
+      say "  Type:        Horizon (pool managed via HORIZON_MAX_PROCESSES / config/horizon.php)" >&2
+    else
+      say "  Type:        supervisor workers (numprocs)" >&2
+    fi
+    say "  Current:     ${SITE_WORKER_PROCS:-default} processes" >&2
+    say "  Recommended: ${C_BOLD}${rec}${C_RESET} ${C_GREY}(${cores} cores, ${mem} MB RAM)${C_RESET}" >&2
+    say "  Set with:    server worker ${site} scale <n>" >&2
+    return 0
+  fi
+
+  [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 )) || die "Provide a positive integer (recommended: ${rec})."
+
+  if [[ "$SITE_HORIZON" == "1" ]]; then
+    step "Setting HORIZON_MAX_PROCESSES=${n}" env_set_key "$SITE_APP_ROOT" HORIZON_MAX_PROCESSES "$n" \
+      || die "Could not update the .env."
+    _sched_persist "$site" worker_procs "$n"
+    step "Restarting Horizon" workers_restart "$slug" || true
+    ok "Horizon pool set to ${n} processes."
+    info "Effective once config/horizon.php reads env('HORIZON_MAX_PROCESSES') — the deploy wires this for auto-installed Horizon."
+    return 0
+  fi
+
+  local mode="queue"; [[ "$SITE_FRAMEWORK" == symfony ]] && mode="messenger"
+  step "Ensuring supervisor" workers_ensure_supervisor || warn "supervisor unavailable."
+  step "Scaling ${mode} worker to ${n}" \
+    workers_install_supervisor "$slug" "$SITE_APP_ROOT" "$SITE_PHP_VERSION" "$mode" "$n" \
+    || die "Could not scale the worker."
+  _sched_persist "$site" queue 1
+  _sched_persist "$site" worker_procs "$n"
+  workers_restart "$slug" >/dev/null 2>&1 || true
+  ok "Worker scaled to ${n} processes."
 }
 
 # ---------------------------------------------------------------------------
