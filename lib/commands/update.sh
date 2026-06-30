@@ -36,19 +36,29 @@ cmd_update() {
   local backup_dir="${REMOTE_BACKUPS}/${domain}/${ts}"
   local sha_before="" sha_after=""
 
-  # 2-3. Preflight: repo valid + clean working tree.
+  # 2-3. Preflight: make sure the code is present (clone on first deploy), then
+  #      check the working tree.
+  local fresh_clone=0
   if [[ "$has_git" == 1 ]]; then
     section "Preflight"
-    step "Validating git repository" deploy_git_valid \
-      || _update_abort "$domain" "$ts" "" "" "$backup_dir" "Not a git repo with an 'origin' remote at ${app_root}."
-    if ! deploy_git_is_clean "$app_root"; then
-      warn "The working tree at ${app_root} has uncommitted changes."
-      confirm "Continue and risk losing them?" "n" \
-        || _update_abort "$domain" "$ts" "" "" "$backup_dir" "Aborted due to local changes."
+    if deploy_git_valid "$app_root"; then
+      ok "Git repository present."
+      if ! deploy_git_is_clean "$app_root"; then
+        warn "The working tree at ${app_root} has uncommitted changes."
+        confirm "Continue and risk losing them?" "n" \
+          || _update_abort "$domain" "$ts" "" "" "$backup_dir" "Aborted due to local changes."
+      else
+        ok "Working tree is clean."
+      fi
+      sha_before="$(deploy_git_sha "$app_root")"
     else
-      ok "Working tree is clean."
+      # Never deployed yet — there's no checkout in ${app_root}. Bootstrap the
+      # first deploy by cloning the configured remote.
+      step "Cloning ${SITE_GIT_REMOTE} (${SITE_GIT_BRANCH:-main})" \
+        deploy_git_clone "$app_root" "$SITE_GIT_REMOTE" "${SITE_GIT_BRANCH:-main}" \
+        || _update_abort "$domain" "$ts" "" "" "$backup_dir" "Could not clone ${SITE_GIT_REMOTE} into ${app_root}."
+      fresh_clone=1
     fi
-    sha_before="$(deploy_git_sha "$app_root")"
   fi
 
   # 4. Backup.
@@ -59,18 +69,21 @@ cmd_update() {
 
   section "Deploy"
 
-  # 5. Maintenance mode (Laravel/Statamic).
-  if _is_laravel_like "$fw"; then
+  # 5. Maintenance mode (Laravel/Statamic). Skipped on a first deploy: the site
+  #    isn't live yet and artisan can't run before composer install.
+  if _is_laravel_like "$fw" && [[ "$fresh_clone" == 0 ]]; then
     step "Enabling maintenance mode" deploy_laravel_down "$app_root" "$php" \
       || _update_abort "$domain" "$ts" "$sha_before" "" "$backup_dir" "Could not enable maintenance mode."
     _UPD_MAINT=1
   fi
 
-  # 6. Pull code.
+  # 6. Pull code (a fresh clone is already at the tip, so only pull otherwise).
   if [[ "$has_git" == 1 ]]; then
-    step "Pulling ${SITE_GIT_BRANCH:-main} from origin" \
-      deploy_git_pull "$app_root" "${SITE_GIT_BRANCH:-main}" \
-      || _update_abort "$domain" "$ts" "$sha_before" "" "$backup_dir" "git pull failed (not fast-forward?)."
+    if [[ "$fresh_clone" == 0 ]]; then
+      step "Pulling ${SITE_GIT_BRANCH:-main} from origin" \
+        deploy_git_pull "$app_root" "${SITE_GIT_BRANCH:-main}" "$SITE_GIT_REMOTE" \
+        || _update_abort "$domain" "$ts" "$sha_before" "" "$backup_dir" "git pull failed (not fast-forward?)."
+    fi
     sha_after="$(deploy_git_sha "$app_root")"
   fi
 

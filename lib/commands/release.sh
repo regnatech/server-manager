@@ -128,10 +128,12 @@ _release_deploy() {
   banner "release deploy — ${site} (${branch})"
 
   [[ -n "$SITE_GIT_REMOTE" ]] || die "Atomic releases need a git remote."
+  local auth_remote; auth_remote="$(_deploy_git_auth_url "$SITE_GIT_REMOTE")"
   step "Creating release ${ts}" ssh_script <<EOF
 set -e
-root=$(shq "$root"); rel=$(shq "$rel"); remote=$(shq "$SITE_GIT_REMOTE"); branch=$(shq "$branch")
-git clone --depth 1 --branch "\$branch" "\$remote" "\$rel"
+root=$(shq "$root"); rel=$(shq "$rel"); remote=$(shq "$SITE_GIT_REMOTE"); auth=$(shq "$auth_remote"); branch=$(shq "$branch")
+git clone --depth 1 --branch "\$branch" "\$auth" "\$rel"
+[ "\$auth" = "\$remote" ] || git -C "\$rel" remote set-url origin "\$remote"
 for s in ${_RELEASE_SHARED[*]}; do rm -rf "\$rel/\$s"; ln -sfn "\$root/shared/\$s" "\$rel/\$s"; done
 EOF
 
