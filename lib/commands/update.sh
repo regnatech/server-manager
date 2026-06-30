@@ -110,12 +110,17 @@ cmd_update() {
       -- deploy_node "$app_root" "$SITE_NODE_PM" \
     || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Frontend build failed."
 
-  # 9. Laravel migrate + cache rebuild.
+  # 9. Database migrations + cache rebuild.
   if _is_laravel_like "$fw"; then
     step "Running migrations" deploy_laravel_migrate "$app_root" "$php" \
       || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Migrations failed."
     step "Rebuilding caches" deploy_laravel_optimize "$app_root" "$php" \
       || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Cache rebuild failed."
+  elif [[ "$fw" == symfony ]]; then
+    step "Running migrations" deploy_symfony_migrate "$app_root" "$php" \
+      || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Migrations failed."
+    step "Warming cache" deploy_symfony_cache "$app_root" "$php" \
+      || warn "Cache clear/warmup reported a problem."
   fi
 
   # 10. (Re)apply scheduler + workers, then restart services.
