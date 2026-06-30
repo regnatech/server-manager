@@ -504,13 +504,17 @@ authenticates once and runs fast.
 ## Development
 
 ```bash
-make test     # run the unit test suite (pure bash, no dependencies)
-make lint     # shellcheck (or bash -n) every script
-make smoke    # Docker integration test (needs Docker)
+make test                  # run the unit test suite (pure bash, no dependencies)
+make lint                  # shellcheck (or bash -n) every script
+make smoke                 # Docker integration test (needs Docker)
+make release VERSION=X.Y.Z # tag, GitHub release, sha256, and update the Homebrew tap
 ```
 
 The engine is layered: `lib/core/*` (ui, ssh, config, json), `lib/discovery/*`,
-`lib/providers/*`, `lib/deploy/*` and `lib/commands/*`.
+`lib/providers/*`, `lib/deploy/*` and `lib/commands/*`. `make release` automates
+the whole cut: bump version → test → tag/push → release → compute the tarball
+sha256 → write it into `packaging/homebrew/server-manager.rb` → publish to the
+tap (`regnatech/homebrew-tap`).
 
 ---
 

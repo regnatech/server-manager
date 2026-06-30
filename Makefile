@@ -1,10 +1,11 @@
-.PHONY: test lint install smoke help
+.PHONY: test lint install smoke release help
 
 help:
-	@echo "make test     - run the unit test suite"
-	@echo "make lint     - shellcheck all scripts (if installed)"
-	@echo "make install  - symlink ./bin/server onto your PATH"
-	@echo "make smoke    - run the Docker integration test (needs Docker)"
+	@echo "make test                 - run the unit test suite"
+	@echo "make lint                 - shellcheck all scripts (if installed)"
+	@echo "make install              - symlink ./bin/server onto your PATH"
+	@echo "make smoke                - run the Docker integration test (needs Docker)"
+	@echo "make release VERSION=X.Y.Z - tag, release, and update the Homebrew tap"
 
 test:
 	@bash tests/run.sh
@@ -23,3 +24,6 @@ install:
 
 smoke:
 	@bash tests/docker/smoke.sh
+
+release:
+	@VERSION=$(VERSION) bash scripts/release.sh
