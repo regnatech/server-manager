@@ -96,6 +96,20 @@ _ui_render() {
   printf '%s' "$UI_BUF"
 }
 
+# _ui_site_line <i> — echo a plain, fixed-width columns line for site <i>.
+_ui_site_line() {
+  local i="$1" row d s st fw tls last
+  row="${UI_SITES[$i]}"; d="${row%%$'\t'*}"; s="${row#*$'\t'}"
+  if [[ -n "${UI_STATUS[$i]:-}" ]]; then
+    st="${UI_STATUS[$i]}"
+    fw="${st%%$'\t'*}"; st="${st#*$'\t'}"
+    tls="${st%%$'\t'*}"; last="${st#*$'\t'}"
+  else
+    fw="..."; tls="..."; last="..."
+  fi
+  printf '%-24.24s %-11.11s %-4.4s %-22.22s %s' "$d" "$fw" "$tls" "$last" "$s"
+}
+
 _ui_render_sites() {
   local def scount
   def="$(registry_default)"
@@ -109,13 +123,15 @@ _ui_render_sites() {
     _ui_row ""
     _ui_row "  ${C_GREY}No sites yet — press 'a' to add one.${C_RESET}"
   else
-    local i row d s
+    local hdr; hdr="  $(printf '%-24.24s %-11.11s %-4.4s %-22.22s %s' \
+      DOMAIN FRAMEWORK TLS 'LAST DEPLOY' SERVER)"
+    _ui_row "${C_GREY}${hdr:0:UI_COLS}${C_RESET}"
+    local i ln
     for i in "${!UI_SITES[@]}"; do
-      row="${UI_SITES[$i]}"; d="${row%%$'\t'*}"; s="${row#*$'\t'}"
       if (( i == UI_SEL )); then
-        _ui_sel_row "$(printf '  > %-34s %s' "$d" "$s")"
+        _ui_sel_row "> $(_ui_site_line "$i")"
       else
-        _ui_row "$(printf '    %-34s ' "$d")${C_GREY}${s}${C_RESET}"
+        ln="  $(_ui_site_line "$i")"; _ui_row "${ln:0:UI_COLS}"
       fi
     done
   fi
@@ -165,10 +181,10 @@ _ui_shell() {
 _ui_menu_action() {
   local d="$UI_DOMAIN"
   case "$1" in
-    0) _ui_run "Deploy ${d}"        cmd_update   "$d";;
+    0) _ui_run "Deploy ${d}"        cmd_update   "$d"; _ui_load_status;;
     1) _ui_run "Logs ${d}"          cmd_logs     "$d";;
-    2) _ui_run "Roll back ${d}"     cmd_rollback "$d";;
-    3) _ui_run "Renew TLS ${d}"     cmd_ssl      "$d";;
+    2) _ui_run "Roll back ${d}"     cmd_rollback "$d"; _ui_load_status;;
+    3) _ui_run "Renew TLS ${d}"     cmd_ssl      "$d"; _ui_load_status;;
     4) _ui_run "Audit ${d}"         cmd_audit    "$d";;
     5) _ui_run "Env ${d}"           cmd_env      "$d" show;;
     6) _ui_run "Shell ${d}"         _ui_shell    "$d";;
@@ -194,6 +210,7 @@ HELP
 
 _ui_load_sites() {
   UI_SITES=()
+  UI_STATUS=()
   local line
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
@@ -201,6 +218,35 @@ _ui_load_sites() {
   done <<< "$(index_all)"
   (( ${#UI_SITES[@]} == 0 )) && UI_SEL=0
   (( UI_SEL >= ${#UI_SITES[@]} && ${#UI_SITES[@]} > 0 )) && UI_SEL=$(( ${#UI_SITES[@]} - 1 ))
+}
+
+# _ui_load_status — fill UI_STATUS[i] ("framework<TAB>tls<TAB>last") for each
+# site by reading its remote config + deploy history (same data as `server
+# list`). One SSH auth per server thanks to ControlMaster; blocks while loading.
+_ui_load_status() {
+  UI_STATUS=()
+  local i row domain server fw tls last cur status
+  for i in "${!UI_SITES[@]}"; do
+    row="${UI_SITES[$i]}"; domain="${row%%$'\t'*}"; server="${row#*$'\t'}"
+    fw="?"; tls="-"; last="never"
+    if registry_exists "$server"; then
+      ssh_use_server "$server"
+      if site_load "$domain" 2>/dev/null; then
+        fw="$(framework_label "$SITE_FRAMEWORK")"
+        [[ "$SITE_HTTPS" == "1" ]] && tls="yes" || tls="no"
+        cur="$(history_current "$domain" 2>/dev/null)"
+        if [[ -n "$cur" ]]; then
+          status="$(history_get "$domain" "$cur" status 2>/dev/null)"
+          last="${cur} (${status:-?})"
+        fi
+      else
+        fw="(missing)"
+      fi
+    else
+      fw="(no server)"
+    fi
+    UI_STATUS[$i]="${fw}"$'\t'"${tls}"$'\t'"${last}"
+  done
 }
 
 # returns non-zero to quit the app
@@ -215,7 +261,7 @@ _ui_key_sites() {
       local row="${UI_SITES[$UI_SEL]}"
       UI_DOMAIN="${row%%$'\t'*}"; UI_SERVER="${row#*$'\t'}"
       UI_VIEW=menu; UI_MSEL=0;;
-    refresh) _ui_load_sites; UI_MSG="Refreshed.";;
+    refresh) _ui_load_sites; UI_MSG="Loading status…"; _ui_render; _ui_load_status; UI_MSG="Refreshed.";;
     help)    _ui_help;;
     char:a)  _ui_run "Add a site" cmd_add; _ui_load_sites;;
     quit)    return 1;;
@@ -253,10 +299,18 @@ cmd_ui() {
   config_init_local
   UI_VIEW=sites; UI_SEL=0; UI_MSEL=0; UI_MSG=""
   UI_DOMAIN=""; UI_SERVER=""
+  UI_SITES=(); UI_STATUS=()
   _ui_load_sites
 
   _ui_enter_screen
   trap '_ui_leave_screen' INT TERM EXIT
+
+  # First paint shows the list immediately with "..." placeholders, then we
+  # fetch live status (framework / TLS / last deploy) over SSH and repaint.
+  if (( ${#UI_SITES[@]} > 0 )); then
+    UI_MSG="Loading status…"; _ui_render
+    _ui_load_status; UI_MSG=""
+  fi
 
   local key
   while :; do
