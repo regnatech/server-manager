@@ -110,6 +110,7 @@ ${C_BOLD}USAGE${C_RESET}
 
 ${C_BOLD}INTERACTIVE${C_RESET}
   ui                       Full-screen terminal control panel (manage everything)
+  mcp                      Run the MCP server (lets AI assistants drive the CLI)
 
 ${C_BOLD}SITE COMMANDS${C_RESET}
   add [domain] [root]      Wizard: discover, configure and provision a new site
@@ -192,6 +193,10 @@ main() {
     servers)        cmd_server_servers "$@";;
 
     ui)             _require_cmd_impl cmd_ui "$cmd";       cmd_ui "$@";;
+    mcp)
+      command -v python3 >/dev/null 2>&1 || die "The MCP server needs python3 (not found on PATH)."
+      [[ -f "$SRVMGR_ROOT/mcp/server_manager_mcp.py" ]] || die "MCP server not found at $SRVMGR_ROOT/mcp/."
+      SM_BIN="$SRVMGR_BIN_DIR/server" exec python3 "$SRVMGR_ROOT/mcp/server_manager_mcp.py" "$@";;
     add)            _require_cmd_impl cmd_add "$cmd";      cmd_add "$@";;
     upload)         _require_cmd_impl cmd_upload "$cmd";   cmd_upload "$@";;
     env)            _require_cmd_impl cmd_env "$cmd";      cmd_env "$@";;
