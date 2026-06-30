@@ -331,7 +331,7 @@ _update_all() {
   done
 
   ok "Done: ${ok_c} deployed, ${fail_c} failed (of ${#targets[@]})."
-  json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind deploy_all),$(json_kv_raw value "{$(json_kv_raw total "${#targets[@]}"),$(json_kv_raw deployed "$ok_c"),$(json_kv_raw failed "$fail_c")}")}"
+  if json_mode; then ui_emit "{\"t\":\"data\",$(json_kv_string kind deploy_all),$(json_kv_raw value "{$(json_kv_raw total "${#targets[@]}"),$(json_kv_raw deployed "$ok_c"),$(json_kv_raw failed "$fail_c")}")}"; fi
   return 0
 }
 

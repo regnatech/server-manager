@@ -360,7 +360,7 @@ _audit_fixall() {
   local ids=("${_AUDIT_FIX_IDS[@]+"${_AUDIT_FIX_IDS[@]}"}")
   if (( ${#ids[@]} == 0 )); then
     ok "Nothing to fix — no auto-fixable findings."
-    json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind audit_fixall),$(json_kv_raw value "{$(json_kv_raw applied 0),$(json_kv_raw failed 0)}")}"
+    if json_mode; then ui_emit "{\"t\":\"data\",$(json_kv_string kind audit_fixall),$(json_kv_raw value "{$(json_kv_raw applied 0),$(json_kv_raw failed 0)}")}"; fi
     return 0
   fi
 
@@ -371,7 +371,7 @@ _audit_fixall() {
   done
 
   ok "Applied ${applied} fix(es); ${failed} failed. Re-run 'server audit' to confirm."
-  json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind audit_fixall),$(json_kv_raw value "{$(json_kv_raw applied "$applied"),$(json_kv_raw failed "$failed")}")}"
+  if json_mode; then ui_emit "{\"t\":\"data\",$(json_kv_string kind audit_fixall),$(json_kv_raw value "{$(json_kv_raw applied "$applied"),$(json_kv_raw failed "$failed")}")}"; fi
 }
 
 # Emit the collected findings (JSON data event, or a TTY summary).

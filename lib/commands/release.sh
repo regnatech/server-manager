@@ -147,7 +147,7 @@ EOF
   step "Reloading services" deploy_restart_php_fpm "$SITE_PHP_VERSION" || warn "PHP-FPM reload reported a problem."
   ok "Released ${ts} (atomic). Roll back instantly with 'server release rollback ${site}'."
   notify_send success "Released ${site}" "Atomic release ${ts}" || true
-  json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind release_done),$(json_kv_raw value "{$(json_kv_string release "$ts")}")}"
+  if json_mode; then ui_emit "{\"t\":\"data\",$(json_kv_string kind release_done),$(json_kv_raw value "{$(json_kv_string release "$ts")}")}"; fi
 }
 
 # Instant rollback: repoint `current` to the previous (or named) release.

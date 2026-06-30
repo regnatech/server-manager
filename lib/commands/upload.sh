@@ -56,5 +56,5 @@ cmd_upload() {
   fi
 
   ok "Uploaded to ${server}:${rpath}"
-  json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind upload_done),$(json_kv_raw value "{$(json_kv_string path "$rpath")}")}"
+  if json_mode; then ui_emit "{\"t\":\"data\",$(json_kv_string kind upload_done),$(json_kv_raw value "{$(json_kv_string path "$rpath")}")}"; fi
 }

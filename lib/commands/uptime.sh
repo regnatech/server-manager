@@ -70,5 +70,5 @@ cmd_uptime() {
     fi
   done
   items+="]"
-  json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind uptime),$(json_kv_raw items "$items")}"
+  if json_mode; then ui_emit "{\"t\":\"data\",$(json_kv_string kind uptime),$(json_kv_raw items "$items")}"; fi
 }

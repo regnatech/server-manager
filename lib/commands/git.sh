@@ -255,7 +255,7 @@ _git_cmd_merge() {
   ssh_app_exec "$app_root" "git merge --no-edit $(shq "$branch")" >/dev/null 2>&1 || rc=$?
   if (( rc == 0 )); then
     ok "Merged '${branch}' cleanly."
-    json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind git_merge),$(json_kv_raw value "{$(json_kv_raw clean true)}")}"
+    if json_mode; then ui_emit "{\"t\":\"data\",$(json_kv_string kind git_merge),$(json_kv_raw value "{$(json_kv_raw clean true)}")}"; fi
     return 0
   fi
 
@@ -303,7 +303,7 @@ _git_cmd_resolve() {
   fi
   local remaining; remaining="$(ssh_app_exec "$app_root" "git diff --name-only --diff-filter=U | sed '/^$/d' | wc -l" 2>/dev/null || echo '?')"
   ok "Resolved ${path}. Remaining conflicts: ${remaining}."
-  json_mode && ui_emit "{\"t\":\"data\",$(json_kv_string kind git_resolved),$(json_kv_raw value "{$(json_kv_string path "$path"),$(json_kv_raw remaining "${remaining:-0}")}")}"
+  if json_mode; then ui_emit "{\"t\":\"data\",$(json_kv_string kind git_resolved),$(json_kv_raw value "{$(json_kv_string path "$path"),$(json_kv_raw remaining "${remaining:-0}")}")}"; fi
   return 0
 }
 
