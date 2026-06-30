@@ -252,7 +252,14 @@ RHEL‑family (dnf/yum) is supported on a best‑effort basis.
 
 ## Install
 
-**Linux / macOS**
+**Homebrew (macOS / Linux)**
+
+```bash
+brew install regnatech/tap/server-manager
+server help
+```
+
+**From source (macOS / Linux)**
 
 ```bash
 git clone https://github.com/regnatech/server-manager.git
