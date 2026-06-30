@@ -28,6 +28,7 @@ UI_MENU_LABELS=(
   "Import database"
   "Export database (backup)"
   "Upload file / directory"
+  "File manager"
   "Scale workers"
   "Toggle scheduler"
   "Open a shell"
@@ -96,7 +97,11 @@ _ui_sel_row() { UI_BUF+=$'\033[7m'"$(_ui_pad "$1" "$UI_COLS")"$'\033[27m'$'\033[
 _ui_render() {
   _ui_size
   UI_BUF=$'\033[H'
-  if [[ "$UI_VIEW" == menu ]]; then _ui_render_menu; else _ui_render_sites; fi
+  case "$UI_VIEW" in
+    menu)  _ui_render_menu;;
+    files) _ui_render_files;;
+    *)     _ui_render_sites;;
+  esac
   UI_BUF+=$'\033[J'
   printf '%s' "$UI_BUF"
 }
@@ -223,14 +228,143 @@ _ui_menu_action() {
     6)  _ui_run "Import database ${d}" cmd_db import "$d";;
     7)  _ui_run "Export database ${d}" cmd_db export "$d";;
     8)  _ui_run "Upload to ${d}"     _ui_upload   "$d";;
-    9)  _ui_run "Scale workers ${d}" cmd_worker   "$d" scale; _ui_load_site_detail;;
-    10) # Toggle scheduler based on the current state.
+    9)  _ui_open_files;;
+    10) _ui_run "Scale workers ${d}" cmd_worker   "$d" scale; _ui_load_site_detail;;
+    11) # Toggle scheduler based on the current state.
         if [[ "$UI_DET_SCHED" == on ]]; then _ui_run "Disable scheduler ${d}" cmd_scheduler "$d" off
         else _ui_run "Enable scheduler ${d}" cmd_scheduler "$d" on; fi
         _ui_load_site_detail;;
-    11) _ui_run "Shell ${d}"         _ui_shell    "$d";;
-    12) UI_VIEW=sites;;
+    12) _ui_run "Shell ${d}"         _ui_shell    "$d";;
+    13) UI_VIEW=sites;;
   esac
+}
+
+# --- file manager ---------------------------------------------------------
+
+# _ui_fs_list <dir> — list a remote dir as "type<TAB>name<TAB>size" lines
+# (type: d|f|l|o). Sudo-aware so root-owned trees are readable.
+_ui_fs_list() {
+  ssh_sudo "
+    cd $(shq "$1") 2>/dev/null || exit 1
+    for e in .* *; do
+      [ \"\$e\" = . ] && continue
+      [ \"\$e\" = .. ] && continue
+      [ -e \"\$e\" ] || [ -L \"\$e\" ] || continue
+      if   [ -L \"\$e\" ]; then t=l; sz=-
+      elif [ -d \"\$e\" ]; then t=d; sz=-
+      elif [ -f \"\$e\" ]; then t=f; sz=\$(wc -c < \"\$e\" 2>/dev/null | tr -d ' '); [ -n \"\$sz\" ] || sz=0
+      else t=o; sz=-
+      fi
+      printf '%s\t%s\t%s\n' \"\$t\" \"\$e\" \"\$sz\"
+    done
+  "
+}
+
+# _ui_fs_read <path> — print a remote file's contents (sudo-aware).
+_ui_fs_read() { ssh_sudo "cat $(shq "$1") 2>/dev/null"; }
+
+# _ui_fs_write <path> < content — overwrite a remote file in place (preserving
+# its owner/mode when it already exists), embedding the body in the payload.
+_ui_fs_write() {
+  local path="$1" body; body="$(cat)"
+  ssh_script --sudo <<EOF
+set -e
+cat > $(shq "$path") <<'SRVMGR_FILE_EOF'
+${body}
+SRVMGR_FILE_EOF
+EOF
+}
+
+# _ui_open_files — enter the file manager rooted at the site's app root.
+_ui_open_files() {
+  ssh_use_server "$UI_SERVER" 2>/dev/null
+  site_load "$UI_DOMAIN" >/dev/null 2>&1 || true
+  UI_FM_PATH="${SITE_APP_ROOT:-/var/www}"
+  UI_FSEL=0; UI_VIEW=files
+  _ui_render; _ui_load_files
+}
+
+# _ui_load_files — populate UI_FILES for UI_FM_PATH (dirs first, then files).
+_ui_load_files() {
+  UI_FILES=(); UI_FSEL="${UI_FSEL:-0}"
+  [[ "$UI_FM_PATH" != "/" ]] && UI_FILES+=( "d"$'\t'".."$'\t'"-" )
+  local raw line; raw="$(_ui_fs_list "$UI_FM_PATH" 2>/dev/null)"
+  local sorted; sorted="$(printf '%s\n' "$raw" | LC_ALL=C sort -t$'\t' -k1,1 -k2,2)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    UI_FILES+=("$line")
+  done <<< "$sorted"
+  (( UI_FSEL >= ${#UI_FILES[@]} )) && UI_FSEL=0
+}
+
+# _ui_fm_up — go up one directory (no-op at /).
+_ui_fm_up() {
+  [[ "$UI_FM_PATH" == "/" ]] && return 0
+  UI_FM_PATH="$(dirname "$UI_FM_PATH")"; UI_FSEL=0
+  _ui_render; _ui_load_files
+}
+
+# _ui_edit_file <path> — download, open in $EDITOR (or a pager for binaries),
+# and upload back if it changed.
+_ui_edit_file() {
+  local path="$1" tmp before after
+  tmp="$(mktemp -t sm-file.XXXXXX)" || { err "Could not create a temp file."; return 1; }
+  _ui_fs_read "$path" > "$tmp"
+  if [[ -s "$tmp" ]] && ! grep -Iq . "$tmp" 2>/dev/null; then
+    warn "Binary file — opening read-only."
+    "${PAGER:-less}" "$tmp"; rm -f "$tmp"; return 0
+  fi
+  before="$(cksum < "$tmp")"
+  "${VISUAL:-${EDITOR:-vi}}" "$tmp" || { rm -f "$tmp"; err "Editor exited with an error."; return 1; }
+  after="$(cksum < "$tmp")"
+  if [[ "$before" == "$after" ]]; then rm -f "$tmp"; info "No changes."; return 0; fi
+  if _ui_fs_write "$path" < "$tmp"; then ok "Saved ${path}."; else err "Could not save ${path}."; fi
+  rm -f "$tmp"
+}
+
+# _ui_render_files — the file-browser view.
+_ui_render_files() {
+  _ui_row "${C_BOLD}${C_CYAN} Files ${C_RESET}${C_GREY}${UI_DOMAIN}${C_RESET}"
+  _ui_row "  ${C_GREY}${UI_FM_PATH}${C_RESET}"
+  _ui_row ""
+  if (( ${#UI_FILES[@]} == 0 )); then
+    _ui_row "  ${C_GREY}(empty or unreadable)${C_RESET}"
+  else
+    local i t n s disp size line
+    for i in "${!UI_FILES[@]}"; do
+      IFS=$'\t' read -r t n s <<< "${UI_FILES[$i]}"
+      case "$t" in d) disp="${n}/";; l) disp="${n}@";; *) disp="$n";; esac
+      size=""; [[ "$t" == f ]] && size="$(_metrics_human "$s")"
+      line="$(printf '%-44.44s %10s' "$disp" "$size")"
+      if (( i == UI_FSEL )); then _ui_sel_row "> $line"
+      else local x="  $line"; _ui_row "${x:0:UI_COLS}"; fi
+    done
+  fi
+  _ui_row ""
+  _ui_row "${C_GREY}↑/↓ move · enter open/edit · ← up · esc back · q quit${C_RESET}"
+}
+
+# _ui_key_files — input handler for the file browser. Returns non-zero to quit.
+_ui_key_files() {
+  local k="$1" n=${#UI_FILES[@]} t name
+  case "$k" in
+    up)    (( n )) && UI_FSEL=$(( (UI_FSEL - 1 + n) % n ));;
+    down)  (( n )) && UI_FSEL=$(( (UI_FSEL + 1) % n ));;
+    left)  _ui_fm_up;;
+    back)  UI_VIEW=menu;;
+    quit)  return 1;;
+    enter|right|char:e)
+      (( n )) || return 0
+      IFS=$'\t' read -r t name _ <<< "${UI_FILES[$UI_FSEL]}"
+      if [[ "$name" == ".." ]]; then _ui_fm_up
+      elif [[ "$t" == d ]]; then
+        UI_FM_PATH="${UI_FM_PATH%/}/$name"; UI_FSEL=0; _ui_render; _ui_load_files
+      elif [[ "$t" == f ]]; then
+        _ui_run "Edit ${name}" _ui_edit_file "${UI_FM_PATH%/}/$name"; _ui_load_files
+      fi;;
+    *) :;;
+  esac
+  return 0
 }
 
 # _ui_upload <domain> — prompt for a local path + remote destination, then
@@ -356,6 +490,7 @@ cmd_ui() {
   UI_VIEW=sites; UI_SEL=0; UI_MSEL=0; UI_MSG=""
   UI_DOMAIN=""; UI_SERVER=""
   UI_DET_FW=""; UI_DET_TLS=""; UI_DET_SCHED=""; UI_DET_WORKER=""
+  UI_FM_PATH=""; UI_FSEL=0; UI_FILES=()
   UI_SITES=(); UI_STATUS=()
   _ui_load_sites
 
@@ -373,11 +508,11 @@ cmd_ui() {
   while :; do
     _ui_render
     key="$(_ui_read_key)"
-    if [[ "$UI_VIEW" == menu ]]; then
-      _ui_key_menu "$key" || break
-    else
-      _ui_key_sites "$key" || break
-    fi
+    case "$UI_VIEW" in
+      menu)  _ui_key_menu  "$key" || break;;
+      files) _ui_key_files "$key" || break;;
+      *)     _ui_key_sites "$key" || break;;
+    esac
   done
 
   _ui_leave_screen
