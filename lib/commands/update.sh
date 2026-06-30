@@ -82,7 +82,7 @@ cmd_update() {
     if [[ "$fresh_clone" == 0 ]]; then
       step "Pulling ${SITE_GIT_BRANCH:-main} from origin" \
         deploy_git_pull "$app_root" "${SITE_GIT_BRANCH:-main}" "$SITE_GIT_REMOTE" \
-        || _update_abort "$domain" "$ts" "$sha_before" "" "$backup_dir" "git pull failed (not fast-forward?)."
+        || _update_abort "$domain" "$ts" "$sha_before" "" "$backup_dir" "Could not update from ${SITE_GIT_REMOTE} — check repo access (token scope / org SSO authorization / deploy key) and that '${SITE_GIT_BRANCH:-main}' fast-forwards."
     fi
     sha_after="$(deploy_git_sha "$app_root")"
   fi
