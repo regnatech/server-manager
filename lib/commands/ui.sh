@@ -25,6 +25,8 @@ UI_MENU_LABELS=(
   "Renew TLS certificate"
   "Security audit"
   "Show .env"
+  "Import database"
+  "Upload file / directory"
   "Scale workers"
   "Toggle scheduler"
   "Open a shell"
@@ -211,20 +213,35 @@ _ui_shell() {
 _ui_menu_action() {
   local d="$UI_DOMAIN"
   case "$1" in
-    0) _ui_run "Deploy ${d}"        cmd_update   "$d"; _ui_load_status; _ui_load_site_detail;;
-    1) _ui_run "Logs ${d}"          cmd_logs     "$d";;
-    2) _ui_run "Roll back ${d}"     cmd_rollback "$d"; _ui_load_status; _ui_load_site_detail;;
-    3) _ui_run "Renew TLS ${d}"     cmd_ssl      "$d"; _ui_load_status; _ui_load_site_detail;;
-    4) _ui_run "Audit ${d}"         cmd_audit    "$d";;
-    5) _ui_run "Env ${d}"           cmd_env      "$d" show;;
-    6) _ui_run "Scale workers ${d}" cmd_worker   "$d" scale; _ui_load_site_detail;;
-    7) # Toggle scheduler based on the current state.
-       if [[ "$UI_DET_SCHED" == on ]]; then _ui_run "Disable scheduler ${d}" cmd_scheduler "$d" off
-       else _ui_run "Enable scheduler ${d}" cmd_scheduler "$d" on; fi
-       _ui_load_site_detail;;
-    8) _ui_run "Shell ${d}"         _ui_shell    "$d";;
-    9) UI_VIEW=sites;;
+    0)  _ui_run "Deploy ${d}"        cmd_update   "$d"; _ui_load_status; _ui_load_site_detail;;
+    1)  _ui_run "Logs ${d}"          cmd_logs     "$d";;
+    2)  _ui_run "Roll back ${d}"     cmd_rollback "$d"; _ui_load_status; _ui_load_site_detail;;
+    3)  _ui_run "Renew TLS ${d}"     cmd_ssl      "$d"; _ui_load_status; _ui_load_site_detail;;
+    4)  _ui_run "Audit ${d}"         cmd_audit    "$d";;
+    5)  _ui_run "Env ${d}"           cmd_env      "$d" show;;
+    6)  _ui_run "Import database ${d}" cmd_db import "$d";;
+    7)  _ui_run "Upload to ${d}"     _ui_upload   "$d";;
+    8)  _ui_run "Scale workers ${d}" cmd_worker   "$d" scale; _ui_load_site_detail;;
+    9)  # Toggle scheduler based on the current state.
+        if [[ "$UI_DET_SCHED" == on ]]; then _ui_run "Disable scheduler ${d}" cmd_scheduler "$d" off
+        else _ui_run "Enable scheduler ${d}" cmd_scheduler "$d" on; fi
+        _ui_load_site_detail;;
+    10) _ui_run "Shell ${d}"         _ui_shell    "$d";;
+    11) UI_VIEW=sites;;
   esac
+}
+
+# _ui_upload <domain> — prompt for a local path + remote destination, then
+# upload. Runs inside _ui_run (normal terminal), so prompts work.
+_ui_upload() {
+  local d="$1" src dest base
+  src="$(ask_required "Local file or directory to upload")"
+  src="${src/#\~/$HOME}"
+  src="${src%\"}"; src="${src#\"}"; src="${src%\'}"; src="${src#\'}"
+  [[ -e "$src" ]] || { err "Not found: ${src}"; return 1; }
+  base="$(basename "$src")"
+  dest="$(ask "Remote path (relative to the app root, or absolute)" "$base")"
+  cmd_upload "$d" "$src" "$dest"
 }
 
 _ui_help() {
