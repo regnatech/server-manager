@@ -218,6 +218,15 @@ _update_autowire() {
       fi
       if deploy_horizon_present "$app_root"; then
         [[ "$SITE_HORIZON" == 1 ]] || { SITE_HORIZON=1; remote_site_set_kv "$domain" horizon 1 || true; }
+        # Horizon only consumes the redis queue: make sure the app actually dispatches
+        # there. Otherwise jobs pile up on the database/sync queue and are never handled
+        # (a silent failure). Idempotent: only rewrites the .env when it isn't redis yet.
+        local _qc; _qc="$(env_get_key "$app_root" QUEUE_CONNECTION 2>/dev/null | tr -d '[:space:]')"
+        if [[ "$_qc" != redis ]]; then
+          step "Setting QUEUE_CONNECTION=redis (required by Horizon)" \
+            env_set_key "$app_root" QUEUE_CONNECTION redis \
+            || warn "Could not set QUEUE_CONNECTION=redis — set it manually or Horizon won't process jobs."
+        fi
         # Size Horizon's pool to the server (once); the operator can change it
         # later with `server worker <site> scale`.
         if [[ -z "$SITE_WORKER_PROCS" ]]; then
