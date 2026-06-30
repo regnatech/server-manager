@@ -243,6 +243,13 @@ cmd_ui() {
   json_mode && die "'server ui' is interactive and isn't available in --json mode."
   [[ -t 0 && -t 1 ]] || die "'server ui' needs an interactive terminal."
 
+  # This is a long-running interactive loop: many of its commands legitimately
+  # return non-zero (key reads, arithmetic that evaluates to 0, a false `((…))`
+  # guard). The engine runs under `set -e` + a global ERR trap that would abort
+  # on the first such case, so opt this command out for its lifetime.
+  set +e
+  trap - ERR
+
   config_init_local
   UI_VIEW=sites; UI_SEL=0; UI_MSEL=0; UI_MSG=""
   UI_DOMAIN=""; UI_SERVER=""
