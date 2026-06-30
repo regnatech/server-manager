@@ -1,5 +1,11 @@
 # server-manager
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Bash](https://img.shields.io/badge/Bash-3.2%2B-121011?logo=gnubash&logoColor=white)](#requirements)
+[![Dependencies](https://img.shields.io/badge/deps-bash%20%2B%20ssh-informational)](#requirements)
+[![MCP ready](https://img.shields.io/badge/MCP-ready-7C3AED)](docs/mcp.md)
+[![Tests](https://img.shields.io/badge/tests-160%20passing-brightgreen)](tests/)
+
 **Ship to a Linux server the way you wish you could — one wizard, then
 `server update`.** Zero‑config deploys, rollbacks, TLS, databases, queues and a
 security audit, over plain SSH with no agent on the box. And your AI can drive
@@ -95,9 +101,82 @@ server, so the tool is stateless and disposable.
 
 ---
 
+## Screenshots
+
+`server ui` is a full‑screen terminal control panel. (Shown as plain text; in a
+real terminal it's colour‑highlighted with a moving selection bar.)
+
+**Dashboard — every site at a glance, with live status**
+
+```text
+ server-manager — terminal control panel
+
+Servers: 2    default: prod
+
+SITES (3)
+  DOMAIN                   FRAMEWORK   TLS  LAST DEPLOY            SERVER
+> clicketta.net            Laravel     yes  20260630-1547 (ok)     prod
+  shop.example.com         Symfony     yes  20260628-0902 (ok)     prod
+  blog.acme.io             Static Webs no   never                  staging
+
+↑/↓ move · enter open · a add · r refresh · ? help · q quit
+```
+
+<details>
+<summary><b>Per‑site menu — deploy, workers, scheduler, database, files…</b></summary>
+
+```text
+ clicketta.net on prod
+
+  Framework  Laravel         TLS  yes
+  Scheduler  on              Worker  Horizon (5)
+
+Actions
+  > Deploy (update)
+    View logs
+    Roll back
+    Renew TLS certificate
+    Security audit
+    Show .env
+    Import database
+    Export database (backup)
+    Upload file / directory
+    File manager
+    Scale workers
+    Toggle scheduler
+    Open a shell
+    Back
+
+↑/↓ move · enter run · esc back · q quit
+```
+</details>
+
+<details>
+<summary><b>File manager — browse and edit remote files</b></summary>
+
+```text
+ Files clicketta.net
+  /var/www/clicketta_net
+
+  ../
+  app/
+  config/
+  public/
+> .env                                              512 B
+  artisan                                          1.6 KB
+  composer.json                                    2.1 KB
+  storage@
+
+↑/↓ move · enter open · ← up · n new · m rename · d del · g get · r refresh · esc back
+```
+</details>
+
+---
+
 ## Table of contents
 
 - [Why it actually helps](#why-it-actually-helps)
+- [Screenshots](#screenshots)
 - [Features](#features)
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
