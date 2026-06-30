@@ -66,7 +66,7 @@ _ui_read_key() {
     return
   fi
   case "$c" in
-    $'\n'|$'\r') echo enter;;
+    ''|$'\n'|$'\r') echo enter;;   # '' = Enter: icrnl maps CR→NL, read eats the delimiter
     k|K) echo up;;   j|J) echo down;;
     h|H) echo left;; l|L) echo right;;
     q|Q) echo quit;; r|R) echo refresh;; '?') echo help;;
