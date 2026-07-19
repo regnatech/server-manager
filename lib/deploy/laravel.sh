@@ -88,6 +88,13 @@ deploy_install_horizon() {
     if [ -f config/horizon.php ] && ! grep -q HORIZON_MAX_PROCESSES config/horizon.php; then
       sed -i -E \"s/('maxProcesses'[[:space:]]*=>[[:space:]]*)([0-9]+)/\\1(int) env('HORIZON_MAX_PROCESSES', \\2)/g\" config/horizon.php || true
     fi
+    # Raise the supervisor job timeout from Horizon's stock 60s and make it env-driven.
+    # 60s kills long jobs (e.g. LLM/API calls) mid-run BEFORE their own HTTP timeout can
+    # throw a catchable exception, which leaves app-level records orphaned in 'processing'.
+    # Default 300s > any sane per-request HTTP timeout; keep the connection retry_after above it.
+    if [ -f config/horizon.php ] && ! grep -q HORIZON_TIMEOUT config/horizon.php; then
+      sed -i -E \"s/('timeout'[[:space:]]*=>[[:space:]]*)([0-9]+)/\\1(int) env('HORIZON_TIMEOUT', 300)/g\" config/horizon.php || true
+    fi
     echo 'horizon installed'
   "
 }

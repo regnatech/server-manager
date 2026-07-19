@@ -227,6 +227,18 @@ _update_autowire() {
             env_set_key "$app_root" QUEUE_CONNECTION redis \
             || warn "Could not set QUEUE_CONNECTION=redis — set it manually or Horizon won't process jobs."
         fi
+        # Keep the queue's retry_after above Horizon's job timeout (see deploy_install_horizon,
+        # HORIZON_TIMEOUT default 300). If retry_after <= timeout, a job that legitimately runs
+        # longer than retry_after is released and re-reserved while still running (double
+        # processing). Idempotent: only sets it when the operator hasn't set one explicitly.
+        local _ra; _ra="$(env_get_key "$app_root" REDIS_QUEUE_RETRY_AFTER 2>/dev/null | tr -d '[:space:]')"
+        if [[ -z "$_ra" ]]; then
+          local _ht; _ht="$(env_get_key "$app_root" HORIZON_TIMEOUT 2>/dev/null | tr -d '[:space:]')"
+          [[ "$_ht" =~ ^[0-9]+$ ]] || _ht=300
+          step "Setting REDIS_QUEUE_RETRY_AFTER=$((_ht + 30)) (must exceed Horizon timeout)" \
+            env_set_key "$app_root" REDIS_QUEUE_RETRY_AFTER "$((_ht + 30))" \
+            || warn "Could not set REDIS_QUEUE_RETRY_AFTER — set it above HORIZON_TIMEOUT manually."
+        fi
         # Size Horizon's pool to the server (once); the operator can change it
         # later with `server worker <site> scale`.
         if [[ -z "$SITE_WORKER_PROCS" ]]; then
