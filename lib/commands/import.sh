@@ -37,12 +37,10 @@ cmd_import() {
 
   # Detect an existing nginx vhost + whether TLS is already configured.
   local has_vhost https=0
-  has_vhost="$(ssh_exec "for f in /etc/nginx/sites-available/${domain} /etc/nginx/sites-enabled/${domain} /etc/nginx/conf.d/${domain}.conf; do [ -f \"\$f\" ] && { echo yes; break; }; done")"
+  has_vhost="$(nginx_vhost_exists "$domain" || true)"
   if [[ -n "$has_vhost" ]]; then
     info "Existing nginx vhost found — leaving it as-is."
-    if ssh_exec "grep -rqs 'ssl_certificate' /etc/nginx/sites-available/${domain} /etc/nginx/conf.d/${domain}.conf 2>/dev/null; echo \$?" | grep -q '^0$'; then
-      https=1
-    fi
+    nginx_vhost_has_tls "$domain" && https=1
   fi
 
   # Persist config (reuse the add helper).

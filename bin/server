@@ -114,6 +114,7 @@ ${C_BOLD}INTERACTIVE${C_RESET}
 
 ${C_BOLD}SITE COMMANDS${C_RESET}
   add [domain] [root]      Wizard: discover, configure and provision a new site
+                           (or adopt one that's already deployed and serving)
   update <site>            Intelligent zero-downtime deploy (pull, build, migrate, restart)
   update --all [--framework <fw>]  Deploy every matching site
   diff <site>              Preview what a deploy would apply (commits + migrations)

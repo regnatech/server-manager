@@ -132,19 +132,24 @@ remote_ensure_dirs() {
 }
 
 # remote_site_exists <domain>
+# Reads go through ssh_sudo: the site conf is written root-owned 0640
+# (remote_site_write), so on servers whose login user is not root
+# (become=sudo) a plain ssh_exec cat/awk would hit permission-denied and
+# make every site look "not registered". become_wrap runs the command
+# unprivileged when become=none, so this stays correct for root logins too.
 remote_site_exists() {
-  ssh_exec "test -f $(shq "$(remote_site_path "$1")")"
+  ssh_sudo "test -f $(shq "$(remote_site_path "$1")")"
 }
 
 # remote_site_get <domain> <key> -> value (exit 0 even if file/key absent)
 remote_site_get() {
   local domain="$1" key="$2"
-  ssh_exec "awk -F= -v k=$(shq "$key") '\$1==k{sub(/^[^=]*=/,\"\");v=\$0} END{print v}' $(shq "$(remote_site_path "$domain")") 2>/dev/null || true"
+  ssh_sudo "awk -F= -v k=$(shq "$key") '\$1==k{sub(/^[^=]*=/,\"\");v=\$0} END{print v}' $(shq "$(remote_site_path "$domain")") 2>/dev/null || true"
 }
 
 # remote_site_load <domain> — print the whole conf (key=value lines) to stdout.
 remote_site_load() {
-  ssh_exec "cat $(shq "$(remote_site_path "$1")") 2>/dev/null"
+  ssh_sudo "cat $(shq "$(remote_site_path "$1")") 2>/dev/null"
 }
 
 # site_load <domain> — fetch the remote site conf in one round-trip and parse

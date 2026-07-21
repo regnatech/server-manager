@@ -90,11 +90,16 @@ ssh_exec() {
 # ssh_app_exec <dir> <command-string> — run an application command (composer,
 # npm, artisan, git) as the login user inside <dir>, with a PATH that picks up
 # the common per-user / local tool locations that non-login SSH shells miss.
+#
+# Deployed code often ends up owned by the web user (www-data), not the SSH
+# login user, so git would refuse with "detected dubious ownership". We inject
+# safe.directory for <dir> via GIT_CONFIG_* env so every git call in $cmd trusts
+# this one worktree (scoped to $dir, not "*"). It's inert for non-git commands.
 ssh_app_exec() {
   local dir="$1" cmd="$2"
   # Terminate the group with a newline (not " ; }"): a multi-line $cmd ending in
   # a newline would otherwise produce "<newline> ; }" — a syntax error.
-  ssh_exec "export PATH=\"\$HOME/.local/bin:\$HOME/bin:\$HOME/.composer/vendor/bin:\$HOME/.config/composer/vendor/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; cd $(shq "$dir") && { $cmd
+  ssh_exec "export PATH=\"\$HOME/.local/bin:\$HOME/bin:\$HOME/.composer/vendor/bin:\$HOME/.config/composer/vendor/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=$(shq "$dir"); cd $(shq "$dir") && { $cmd
 }"
 }
 

@@ -75,6 +75,22 @@ fi
 EOF
 }
 
+# nginx_vhost_exists <domain> — echo "yes" (and exit 0) when a vhost for the
+#   domain is already present, in either the Debian or RHEL/Alpine layout.
+#   Empty output + non-zero when none is found. Used to detect a site that is
+#   already served so we adopt it instead of overwriting it.
+nginx_vhost_exists() {
+  local domain="$1"
+  ssh_exec "for f in /etc/nginx/sites-available/${domain} /etc/nginx/sites-enabled/${domain} /etc/nginx/conf.d/${domain}.conf; do [ -f \"\$f\" ] && { echo yes; exit 0; }; done; exit 1"
+}
+
+# nginx_vhost_has_tls <domain> — exit 0 when the existing vhost already
+#   references a certificate (so HTTPS is configured), non-zero otherwise.
+nginx_vhost_has_tls() {
+  local domain="$1"
+  ssh_exec "grep -rqs 'ssl_certificate' /etc/nginx/sites-available/${domain} /etc/nginx/conf.d/${domain}.conf 2>/dev/null"
+}
+
 # nginx_enable_https <domain> <le_email>
 #   Obtain/renew a Let's Encrypt cert and let certbot patch the vhost.
 nginx_enable_https() {

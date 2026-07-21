@@ -57,14 +57,34 @@ cmd_add() {
     is_valid_domain "$domain" && break
     warn "That doesn't look like a valid domain."; domain=""
   done
-  if remote_site_exists "$domain"; then
-    die "Site '${domain}' already exists on '${server}'. Use 'server update ${domain}' or 'server import'."
-  fi
   while :; do
     root="$(ask_required "Root (web directory)" "$root")"
     is_abs_path "$root" && break
     warn "Root must be an absolute path."; root=""
   done
+
+  # Already set up? A registered config or a live nginx vhost means the site is
+  # already deployed and serving — offer to adopt it (register/refresh its
+  # config, keep its vhost, no deploy) instead of provisioning over the top.
+  local registered=0 has_vhost=""
+  remote_site_exists "$domain" && registered=1
+  has_vhost="$(nginx_vhost_exists "$domain" || true)"
+  if [[ "$registered" == 1 || -n "$has_vhost" ]]; then
+    if [[ "$registered" == 1 ]]; then
+      info "Site '${domain}' is already registered on '${server}'."
+    else
+      info "Site '${domain}' already has a live nginx vhost on '${server}'."
+    fi
+    if confirm "Adopt the existing site (register it without deploying or replacing its nginx vhost)?" "Y"; then
+      cmd_import "$domain" "$root"
+      return $?
+    fi
+    [[ "$registered" == 1 ]] \
+      && die "Site '${domain}' already exists. Use 'server update ${domain}' to deploy."
+    warn "Continuing with a fresh setup — this will replace the existing nginx vhost for ${domain}."
+    confirm "Proceed?" "n" || die "Aborted."
+  fi
+
   if ! remote_exists "$root"; then
     warn "Path '${root}' does not exist yet on ${server}."
     confirm "Continue anyway?" "n" || die "Aborted."
@@ -90,8 +110,16 @@ cmd_add() {
   # project's public/ dir, so the app root (git, composer, artisan, .env) is its
   # parent — never the public dir itself (the .env must NOT be web-served).
   local app_root="${DISC_APP_ROOT:-$root}"
-  if { _is_laravel_like "$fw" || [[ "$fw" == "symfony" ]]; } && [[ "$root" == */public ]]; then
-    app_root="${root%/public}"
+  if _is_laravel_like "$fw" || [[ "$fw" == "symfony" ]]; then
+    if [[ "$root" == */public ]]; then
+      app_root="${root%/public}"
+    elif [[ "$app_root" == "$root" ]]; then
+      # The caller gave the application root, not its public/ dir. Keep it as
+      # the app root and serve <root>/public as the web root, so the .env and
+      # source stay off the web and index.php resolves (otherwise nginx serves
+      # the project root → 403 + exposed .env).
+      root="$root/public"
+    fi
   fi
   is_php_framework "$fw" && info "Application root: ${C_BOLD}${app_root}${C_RESET}"
 
@@ -444,13 +472,29 @@ _add_apply_json() {
     || die "Cannot reach server '${server}'."
   step "Preparing ${REMOTE_ETC}" remote_ensure_dirs \
     || die "Could not create ${REMOTE_ETC} (need root or passwordless sudo)."
-  remote_site_exists "$domain" \
-    && die "Site '${domain}' already exists. Use 'server update ${domain}'."
+
+  # Already set up? A registered config or a live nginx vhost means the site is
+  # already deployed and serving. Rather than dying (or overwriting it), adopt
+  # it non-interactively: register/refresh its config, keep its vhost, no deploy
+  # — the headless equivalent of the wizard's adopt path / 'server import'.
+  local registered=0 has_vhost="" adopt=0
+  remote_site_exists "$domain" && registered=1
+  has_vhost="$(nginx_vhost_exists "$domain" || true)"
+  [[ "$registered" == 1 || -n "$has_vhost" ]] && adopt=1
+  [[ "$adopt" == 1 ]] \
+    && info "Site '${domain}' is already set up on '${server}' — adopting it (no deploy, keeping any existing nginx vhost)."
 
   # Application root: PHP front-controller frameworks serve from public/.
+  # Accept the web root either as the public/ dir or as the application root:
+  # in the latter case serve <root>/public so the .env and source stay off the
+  # web (otherwise nginx serves the project root → 403 + exposed .env).
   local app_root="$root"
-  if { _is_laravel_like "$fw" || [[ "$fw" == symfony ]]; } && [[ "$root" == */public ]]; then
-    app_root="${root%/public}"
+  if _is_laravel_like "$fw" || [[ "$fw" == symfony ]]; then
+    if [[ "$root" == */public ]]; then
+      app_root="${root%/public}"
+    else
+      root="$root/public"
+    fi
   fi
 
   # PHP-FPM socket (install the runtime if it isn't there yet).
@@ -475,6 +519,13 @@ _add_apply_json() {
 
   local https=0
   case "$tls" in true|1|yes|Yes|TRUE) https=1;; esac
+  # When adopting an existing vhost, reflect reality: read TLS from the vhost
+  # instead of the requested flag (we never touch the vhost, so requesting a
+  # cert here would be wrong).
+  if [[ "$adopt" == 1 && -n "$has_vhost" ]]; then
+    https=0
+    nginx_vhost_has_tls "$domain" && https=1
+  fi
   [[ "$https" == 1 && -n "$tls_email" ]] && global_set le_email "$tls_email"
 
   # Discovery globals consumed by _add_write_conf — unset in the JSON path.
@@ -489,17 +540,21 @@ _add_apply_json() {
   index_set "$domain" "$server"
 
   section "Provisioning"
-  local rendered
-  rendered="$(nginx_render "$domain" "$root" "$fw" "$php_socket" "$upstream")"
-  step "Installing nginx vhost" _add_install_nginx "$domain" "$rendered" \
-    || die "nginx provisioning failed."
-  if [[ "$https" == 1 ]]; then
-    step "Requesting certificate for ${domain}" nginx_enable_https "$domain" "$tls_email" \
-      || warn "HTTPS setup failed — site is live over HTTP. Re-run 'server ssl ${domain}'."
+  if [[ -n "$has_vhost" ]]; then
+    info "Existing nginx vhost found — leaving it as-is."
+  else
+    local rendered
+    rendered="$(nginx_render "$domain" "$root" "$fw" "$php_socket" "$upstream")"
+    step "Installing nginx vhost" _add_install_nginx "$domain" "$rendered" \
+      || die "nginx provisioning failed."
+    if [[ "$https" == 1 ]]; then
+      step "Requesting certificate for ${domain}" nginx_enable_https "$domain" "$tls_email" \
+        || warn "HTTPS setup failed — site is live over HTTP. Re-run 'server ssl ${domain}'."
+    fi
   fi
 
   local proto="http"; [[ "$https" == 1 ]] && proto="https"
-  report_box "Site added: ${domain}" \
+  report_box "Site $([[ "$adopt" == 1 ]] && printf adopted || printf added): ${domain}" \
     "Server      : ${server}" \
     "Framework   : $(framework_label "$fw")" \
     "Web root    : ${root}" \
