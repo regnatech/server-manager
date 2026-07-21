@@ -198,7 +198,10 @@ Actions
 
 - **Wizard (`server add`)** — probes the server, auto‑detects the framework
   (Laravel, Symfony, Statamic, WordPress, static, Node/Next/Nuxt, reverse
-  proxy), and asks only what it can't infer.
+  proxy), and asks only what it can't infer. If the site is **already deployed
+  and serving** (a live nginx vhost or a registered config), it offers to
+  **adopt** it — register its config and keep the existing vhost, no deploy —
+  instead of provisioning over the top.
 - **Intelligent deploy (`server update`)** — backup → maintenance mode →
   `git pull` (clones on first deploy) → Composer → frontend build → migrate →
   cache rebuild → restart → health check, with a timed report. Brings the site
@@ -321,13 +324,13 @@ server rollback clicketta.site
 | `server connect-self [name]` | Register the current machine as a managed target (self‑host). |
 | `server use <name>` | Set the default server. |
 | `server servers` | List registered servers. |
-| `server add [domain] [root]` | Wizard: discover, configure, provision (nginx, DB, TLS). |
+| `server add [domain] [root]` | Wizard: discover, configure, provision (nginx, DB, TLS) — or **adopt** a site that's already deployed and serving. |
 | `server update <site>` | Intelligent, near‑zero‑downtime deploy with health check. |
 | `server rollback <site> [git-ref]` | Revert the last deploy (code + data) or to a ref. |
 | `server release <init\|deploy\|list\|rollback\|prune> <site>` | Atomic, symlink‑switched releases. |
 | `server ssl <site>` | Issue or renew the Let's Encrypt certificate. |
 | `server list` | List managed sites, frameworks, TLS and last deploy. |
-| `server import <domain> <root>` | Adopt an already‑deployed site (no deploy). |
+| `server import <domain> <root>` | Adopt an already‑deployed site, no deploy (also offered automatically by `server add`). |
 | `server upload <site> <local> <remote>` | Copy a local file/dir to the site's server. |
 | `server env <site> [show\|get\|set\|unset\|pull\|push\|edit]` | Manage the remote `.env`. |
 | `server logs <site> [type]` | Tail remote logs (`nginx`\|`php`\|`laravel`\|`queue`). |
@@ -364,6 +367,11 @@ server db import  clicketta.site ./seed.sql.gz
 # Push a file and edit the remote .env
 server upload clicketta.site ./service_account.json storage/service_account.json
 server env    clicketta.site set APP_DEBUG false
+
+# Adopt a site that's already deployed and serving (register it, keep its
+# vhost, no deploy). `server add` offers this automatically when it detects
+# an existing site; `server import` is the explicit form.
+server import clicketta.site /var/www/clicketta/public
 
 # Private repo over SSH: provision a deploy key, then deploy
 server git deploy-key clicketta.site      # prints a key to add on GitHub
