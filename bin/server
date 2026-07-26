@@ -96,6 +96,9 @@ parse_global_args() {
 # Error trap: report where we failed (helps when a deploy step explodes).
 _on_err() {
   local rc=$?
+  # A step exploding must not outlive the process: a deploy that dies here has
+  # the site in maintenance mode, and nothing else would ever take it out.
+  _srvmgr_cleanup || true
   err "Aborted (exit ${rc})."
   exit "$rc"
 }

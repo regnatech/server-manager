@@ -75,6 +75,10 @@ cmd_update() {
     step "Enabling maintenance mode" deploy_laravel_down "$app_root" "$php" \
       || _update_abort "$domain" "$ts" "$sha_before" "" "$backup_dir" "Could not enable maintenance mode."
     _UPD_MAINT=1
+    # From here on, ANY exit — a failing step, a die, the ERR trap — has to take
+    # the site back out of maintenance. Without this a deploy that breaks
+    # halfway leaves a 503 up until somebody notices.
+    _srvmgr_cleanup() { _update_bring_back_up; }
   fi
 
   # 6. Pull code (a fresh clone is already at the tip, so only pull otherwise).
@@ -208,15 +212,15 @@ _update_autowire() {
       SITE_SCHEDULER=1; remote_site_set_kv "$domain" scheduler 1 || true
       ok "Scheduler enabled (artisan schedule:run every minute)."
     fi
-    # Horizon is the default Laravel worker unless plain queue was chosen or
-    # Horizon was explicitly turned off.
-    if [[ "$SITE_QUEUE" != 1 && "$SITE_HORIZON" != 0 ]]; then
+    # Horizon is configured when the application already ships it. It is NOT
+    # added on the operator's behalf: `composer require` during a deploy
+    # rewrites composer.json, composer.lock and bootstrap/providers.php in
+    # someone else's application — an uninvited dependency, and a diff they
+    # never wrote. An app without Horizon gets the plain queue worker, which is
+    # what it was already running.
+    if [[ "$SITE_QUEUE" != 1 && "$SITE_HORIZON" != 0 ]] && deploy_horizon_present "$app_root"; then
       step "Ensuring Redis" toolchain_ensure_redis || warn "Could not ensure Redis (Horizon needs it)."
-      if ! deploy_horizon_present "$app_root"; then
-        step "Installing Laravel Horizon" deploy_install_horizon "$app_root" "$php" \
-          || warn "Could not install Horizon — falling back to a plain queue worker."
-      fi
-      if deploy_horizon_present "$app_root"; then
+      {
         [[ "$SITE_HORIZON" == 1 ]] || { SITE_HORIZON=1; remote_site_set_kv "$domain" horizon 1 || true; }
         # Horizon only consumes the redis queue: make sure the app actually dispatches
         # there. Otherwise jobs pile up on the database/sync queue and are never handled
@@ -249,10 +253,12 @@ _update_autowire() {
             ok "Horizon pool sized to ${rec} (recommended for this server)."
           fi
         fi
-      elif [[ -z "$SITE_QUEUE" ]]; then
-        SITE_QUEUE=1; remote_site_set_kv "$domain" queue 1 || true
-        _autowire_default_procs "$domain" "$app_root"
-      fi
+      }
+    elif [[ -z "$SITE_QUEUE" ]]; then
+      # No Horizon in the app: the plain queue worker, which is what such an
+      # app was already running.
+      SITE_QUEUE=1; remote_site_set_kv "$domain" queue 1 || true
+      _autowire_default_procs "$domain" "$app_root"
     fi
   elif [[ "$fw" == symfony ]]; then
     if [[ -z "$SITE_QUEUE" ]]; then
@@ -443,14 +449,19 @@ _update_all() {
 # _update_abort <domain> <ts> <sha_before> <sha_after> <backup_dir> <message>
 # Bring the site back online (if we took it down), record a failed deploy, and
 # exit non-zero.
+# _update_bring_back_up — idempotent: takes the site out of maintenance mode if
+# this deploy put it there. Safe to call from any exit path.
+_update_bring_back_up() {
+  [[ "$_UPD_MAINT" == 1 && -n "$_UPD_APP_ROOT" ]] || return 0
+  _UPD_MAINT=0
+  warn "Bringing the site back online…"
+  deploy_laravel_up "$_UPD_APP_ROOT" "$_UPD_PHP" >/dev/null 2>&1 || true
+}
+
 _update_abort() {
   local domain="$1" ts="$2" sb="$3" sa="$4" backup="$5" msg="$6"
   err "$msg"
-  if [[ "$_UPD_MAINT" == 1 && -n "$_UPD_APP_ROOT" ]]; then
-    warn "Bringing the site back online…"
-    deploy_laravel_up "$_UPD_APP_ROOT" "$_UPD_PHP" >/dev/null 2>&1 || true
-    _UPD_MAINT=0
-  fi
+  _update_bring_back_up
   history_record "$domain" "$ts" "$sb" "$sa" "$backup" "failed" "0" >/dev/null 2>&1 || true
   notify_send failure "Deploy failed: ${domain}" "${msg}" || true
   err "Deploy aborted. A backup was saved at ${backup} — use 'server rollback ${domain}' if needed."

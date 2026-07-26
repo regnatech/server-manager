@@ -82,7 +82,9 @@ db_env_exists() { ssh_exec "test -f $(shq "$1/.env")"; }
 db_write_env() {
   local app_root="$1"
   local body; body="$(cat)"
-  ssh_script <<EOF
+  # Written as the app user so the file keeps the ownership PHP-FPM reads it
+  # with; a root- or login-user-owned .env is a 500 waiting to happen.
+  ssh_app_script <<EOF
 set -e
 mkdir -p $(shq "$app_root")
 cat > $(shq "$app_root/.env") <<'SRVMGR_ENV_EOF'
@@ -96,10 +98,11 @@ EOF
 # db_run_import <app_root> <remote_file>
 #   Load a SQL file that already sits on the server into the site's database,
 #   reading the connection from the app's .env. Handles .gz transparently.
-#   Runs as the login user (the app DB user has full rights on its own schema).
+#   Runs as the app user: the .env holding those credentials is 640 and owned
+#   by it, so the login user cannot read its own database password.
 db_run_import() {
   local app_root="$1" remote="$2"
-  ssh_script <<EOF
+  ssh_app_script <<EOF
 set -e
 envf=$(shq "$app_root/.env")
 [ -f "\$envf" ] || { echo "no .env at \$envf — provision the database first" >&2; exit 1; }
@@ -125,7 +128,7 @@ EOF
 # STDOUT (the caller redirects it to a local file). Reads creds from .env.
 db_run_export() {
   local app_root="$1"
-  ssh_script <<EOF
+  ssh_app_script <<EOF
 set -e
 envf=$(shq "$app_root/.env")
 [ -f "\$envf" ] || { echo "no .env at \$envf" >&2; exit 1; }

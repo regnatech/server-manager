@@ -18,19 +18,23 @@
 _env_file() { printf '%s/.env' "${1%/}"; }
 
 # env_get_all <app_root> — print the whole .env (empty if it doesn't exist).
-env_get_all() { ssh_exec "cat $(shq "$(_env_file "$1")") 2>/dev/null || true"; }
+#
+# Read through ssh_app_read, not a plain cat: a correctly-permissioned .env is
+# 640 and owned by the web user, so the SSH login user cannot read it. That was
+# enough to break `db export`, which sources DB credentials from here.
+env_get_all() { ssh_app_read "$(_env_file "$1")"; }
 
 # env_get_key <app_root> <key> — print a single value (no quotes/whitespace).
 env_get_key() {
   local app_root="$1" key="$2"
-  ssh_exec "grep -E ^$(shq "$key")= $(shq "$(_env_file "$app_root")") 2>/dev/null | head -1 | cut -d= -f2-"
+  env_get_all "$app_root" | grep -E "^${key}=" | head -1 | cut -d= -f2-
 }
 
 # env_set_key <app_root> <key> <value> — set/replace a key in place, appending
 # it when absent. Creates the .env if it doesn't exist yet.
 env_set_key() {
   local app_root="$1" key="$2" value="$3"
-  ssh_script <<EOF
+  ssh_app_script <<EOF
 set -e
 envf=$(shq "$(_env_file "$app_root")")
 k=$(shq "$key"); v=$(shq "$value")
@@ -50,7 +54,7 @@ EOF
 # env_unset_key <app_root> <key> — drop a key from the .env.
 env_unset_key() {
   local app_root="$1" key="$2"
-  ssh_script <<EOF
+  ssh_app_script <<EOF
 set -e
 envf=$(shq "$(_env_file "$app_root")")
 k=$(shq "$key")

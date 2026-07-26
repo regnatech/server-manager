@@ -365,6 +365,7 @@ queue=$DISC_QUEUE
 horizon=$DISC_HORIZON
 scheduler=$DISC_SCHEDULER
 octane=$DISC_OCTANE
+app_user=$(discover_app_user "$app_root")
 created_at=$now
 EOF
 }

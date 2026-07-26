@@ -160,7 +160,7 @@ site_load() {
   SITE_PHP_VERSION="" SITE_PHP_SOCKET="" SITE_GIT_REMOTE="" SITE_GIT_BRANCH="" \
   SITE_NODE_PM="" SITE_HTTPS="" SITE_LE_EMAIL="" SITE_UPSTREAM="" \
   SITE_REDIS="" SITE_QUEUE="" SITE_HORIZON="" SITE_SCHEDULER="" SITE_OCTANE="" \
-  SITE_WORKER_PROCS=""
+  SITE_WORKER_PROCS="" SITE_APP_USER=""
   local raw; raw="$(remote_site_load "$domain")" || return 1
   [[ -n "$raw" ]] || return 1
   local line k v
@@ -177,9 +177,34 @@ site_load() {
       redis)       SITE_REDIS="$v";;       queue)       SITE_QUEUE="$v";;
       horizon)     SITE_HORIZON="$v";;     scheduler)   SITE_SCHEDULER="$v";;
       octane)      SITE_OCTANE="$v";;      worker_procs) SITE_WORKER_PROCS="$v";;
+      app_user)    SITE_APP_USER="$v";;
     esac
   done <<<"$raw"
-  [[ -n "$SITE_DOMAIN" ]]
+  [[ -n "$SITE_DOMAIN" ]] || return 1
+
+  # Deployed code is normally owned by the web user, not by the SSH login user.
+  # Teach the exec layer who that is so git/composer/artisan run as the account
+  # that can actually write the tree. Resolved live when the conf predates this
+  # key, so adopted sites don't need re-importing.
+  if [[ -z "$SITE_APP_USER" && -n "$SITE_APP_ROOT" ]]; then
+    SITE_APP_USER="$(discover_app_user "$SITE_APP_ROOT")"
+  fi
+  ssh_set_app_user "$SITE_APP_USER"
+  return 0
+}
+
+# discover_app_user <app_root> — the account that owns the deployed tree, which
+# is the one that can write to it. Falls back to the PHP-FPM pool user, then to
+# empty (meaning: just use the login user).
+discover_app_user() {
+  local app_root="$1" user=""
+  user="$(ssh_exec "stat -c '%U' $(shq "$app_root") 2>/dev/null" | tr -d '[:space:]')" || true
+  # An unmapped uid stats as a bare number; that is not a usable sudo target.
+  [[ "$user" =~ ^[0-9]+$ ]] && user=""
+  if [[ -z "$user" || "$user" == "UNKNOWN" ]]; then
+    user="$(ssh_sudo "grep -h '^user[[:space:]]*=' /etc/php/*/fpm/pool.d/*.conf 2>/dev/null | head -1 | sed 's/.*=[[:space:]]*//'" | tr -d '[:space:]')" || true
+  fi
+  printf '%s' "$user"
 }
 
 # remote_site_set_kv <domain> <key> <value> — update a single key in the site

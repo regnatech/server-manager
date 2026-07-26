@@ -346,34 +346,49 @@ _git_cmd_deploy_key() {
   esac
 
   local repo; repo="$(_git_parse_repo "$SITE_GIT_REMOTE")"
-  local slug="${repo//\//-}"; slug="${slug//[^a-zA-Z0-9_-]/-}"
-  local alias_host="github.com-${slug}"
-  local new_remote="git@${alias_host}:${repo}.git"
+  # The plain remote: the key is pinned on the checkout via core.sshCommand, so
+  # there is no per-user ssh config to alias a host against — and an alias with
+  # no matching Host block simply fails to resolve.
+  local new_remote="git@github.com:${repo}.git"
 
   banner "deploy-key — ${site} (${repo})"
 
-  # Generate the key + ssh config + known_hosts on the server; echo the pubkey.
+  # The key belongs to whoever actually runs git — the app user, not the login
+  # user. It lives under /etc/server-manager rather than in a home directory:
+  # a web user's home is often unwritable, and the one we set for tool caches is
+  # under /var/tmp, which the system is entitled to clean out. A deploy key that
+  # evaporates after a month of quiet is a bad surprise.
+  local run_user; run_user="$(ssh_app_user_active)"
+  local key_dir="${REMOTE_ETC}/keys/${site}"
+  local key_path="${key_dir}/deploy_ed25519"
+  local kh_path="${key_dir}/known_hosts"
+
   local out
-  out="$(ssh_script <<EOF
+  out="$(ssh_sudo "$(cat <<EOF
 set -e
 umask 077
-mkdir -p "\$HOME/.ssh"
-key="\$HOME/.ssh/sm_deploy_${slug}"
-[ -f "\$key" ] || ssh-keygen -t ed25519 -N '' -C "server-manager (${repo})" -f "\$key" -q
-touch "\$HOME/.ssh/known_hosts"
-ssh-keygen -F github.com >/dev/null 2>&1 || ssh-keyscan -t rsa,ed25519 github.com 2>/dev/null >> "\$HOME/.ssh/known_hosts"
-cfg="\$HOME/.ssh/config"; touch "\$cfg"; chmod 600 "\$cfg"
-grep -qxF "Host ${alias_host}" "\$cfg" || printf '\n%s\n  %s\n  %s\n  %s\n  %s\n' "Host ${alias_host}" "HostName github.com" "User git" "IdentityFile \$key" "IdentitiesOnly yes" >> "\$cfg"
-cat "\$key.pub"
+install -d -m 700 -o $(shq "$run_user") -g $(shq "$run_user") $(shq "$key_dir")
+if [ ! -f $(shq "$key_path") ]; then
+  ssh-keygen -t ed25519 -N '' -C "server-manager (${repo})" -f $(shq "$key_path") -q
+  chown $(shq "$run_user"):$(shq "$run_user") $(shq "$key_path") $(shq "$key_path").pub
+fi
+touch $(shq "$kh_path")
+ssh-keygen -f $(shq "$kh_path") -F github.com >/dev/null 2>&1 \
+  || ssh-keyscan -t rsa,ed25519 github.com 2>/dev/null >> $(shq "$kh_path")
+chown $(shq "$run_user"):$(shq "$run_user") $(shq "$kh_path")
+chmod 600 $(shq "$key_path") $(shq "$kh_path")
+cat $(shq "$key_path").pub
 EOF
-)" || die "Could not set up the deploy key on '${_SSH_NAME}'."
+)")" || die "Could not set up the deploy key on '${_SSH_NAME}'."
   local pub; pub="$(printf '%s\n' "$out" | grep '^ssh-' | head -1)"
   [[ -n "$pub" ]] || die "Failed to read the generated public key."
 
   step "Switching remote to SSH" remote_site_set_kv "$site" git_remote "$new_remote" \
     || die "Could not update the site's git remote."
   if deploy_git_valid "$app_root"; then
-    _git_run "$app_root" "git remote set-url origin $(shq "$new_remote")" \
+    # Pin the key on the checkout itself, by absolute path: this survives any
+    # HOME the deploy runs with, and needs no per-user ssh config or host alias.
+    _git_run "$app_root" "git remote set-url origin $(shq "$new_remote") && git config core.sshCommand $(shq "ssh -i ${key_path} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${kh_path}")" \
       || warn "Updated the saved remote, but could not retarget origin on the existing checkout."
   fi
 

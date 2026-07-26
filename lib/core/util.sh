@@ -4,7 +4,13 @@
 # Sourced, never executed.
 
 # Abort with a message and non-zero status.
+# _srvmgr_cleanup — set by a command that must undo something before the process
+# dies (a deploy holding the site in maintenance mode). Both `die` and the ERR
+# trap call it, so no failure path can leave the site dark.
+_srvmgr_cleanup() { :; }
+
 die() {
+  _srvmgr_cleanup || true
   err "$*"
   exit 1
 }
