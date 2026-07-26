@@ -164,6 +164,7 @@ t_true "spa fallback" grep -q "try_files .* /index.html;" <<<"$R3"
 # ---------------------------------------------------------------------------
 section_t ".env credential editing (db_set_env_creds executed locally)"
 ssh_script() { [ "${1:-}" = "--sudo" ] && shift; bash; }   # run 'remote' payload locally
+ssh_app_script() { bash; }                                 # ditto, as the app user
 APP="$SBOX/dbapp"; mkdir -p "$APP"
 printf 'APP_NAME=Demo\nDB_CONNECTION=sqlite\nAPP_ENV=local\n' | db_write_env "$APP" >/dev/null
 db_set_env_creds "$APP" clk clkuser sekret123 >/dev/null
@@ -176,13 +177,68 @@ P="$(db_gen_password)"; t_eq "genpass length" "${#P}" 24
 # Must not abort under pipefail+set -e (regression: tr|head -c SIGPIPE'd → 141).
 ( set -eo pipefail; pp="$(db_gen_password)"; [[ ${#pp} -eq 24 ]] ) \
   && t_eq "genpass pipefail-safe" ok ok || t_eq "genpass pipefail-safe" fail ok
-unset -f ssh_script
+unset -f ssh_script ssh_app_script
+
+# ---------------------------------------------------------------------------
+section_t "app user (who deploys)"
+# Deployed trees are normally owned by the web user, so app commands have to
+# run as that account rather than as the SSH login user. These cover the
+# decision itself; the wrapping is exercised by the payload lint below.
+source "$ROOT/lib/core/ssh.sh"
+
+_SSH_USER="ubuntu"; _SSH_BECOME="sudo"
+ssh_set_app_user "www-data"
+t_eq   "app user adopted"        "$(ssh_app_user_active)" "www-data"
+t_true "may switch with sudo"    _ssh_can_become_app_user
+
+# Same account: nothing to switch to, and sudo'ing to yourself is noise.
+ssh_set_app_user "ubuntu"
+t_eq   "own tree stays put"      "$(ssh_app_user_active)" "ubuntu"
+t_false "no switch to self"      _ssh_can_become_app_user
+
+# No sudo and not root: fall back rather than fail, so hosts that never needed
+# this keep working exactly as before.
+_SSH_BECOME="none"; ssh_set_app_user "www-data"
+t_eq   "falls back without sudo" "$(ssh_app_user_active)" "ubuntu"
+t_false "cannot switch"          _ssh_can_become_app_user
+
+# root can always become anyone.
+_SSH_USER="root"; _SSH_BECOME="none"; ssh_set_app_user "www-data"
+t_true "root may switch"         _ssh_can_become_app_user
+
+# The wrapper must quote the script so a payload with spaces/quotes survives.
+_SSH_USER="ubuntu"; _SSH_BECOME="sudo"; ssh_set_app_user "www-data"
+W="$(_ssh_as_app_user "echo 'a b'")"
+# The user is shell-quoted, so match without assuming the quoting style.
+t_true "wraps in sudo -u"        grep -qE "sudo -n -u '?www-data'? bash -c" <<<"$W"
+t_true "wrapped payload quoted"  bash -n <<<"$W"
+
+# HOME must not be the app tree or an unwritable web-user home: composer and
+# npm write their caches there.
+PRE="$(_ssh_app_prelude /var/www/site)"
+t_true "home redirected"         grep -q 'export HOME=' <<<"$PRE"
+t_true "home outside the tree"   grep -q '/var/tmp/server-manager/home-' <<<"$PRE"
+t_true "composer home set"       grep -q 'COMPOSER_HOME=' <<<"$PRE"
+t_true "git trusts the worktree" grep -q 'safe.directory' <<<"$PRE"
+
+# The cleanup hook: `die` and the ERR trap both run it, so a deploy that dies
+# mid-flight cannot leave the site in maintenance mode.
+t_true "cleanup hook defined"    declare -F _srvmgr_cleanup
+CLEANED=0
+_srvmgr_cleanup() { CLEANED=1; }
+( _srvmgr_cleanup ) ; _srvmgr_cleanup
+t_eq  "cleanup hook runs"        "$CLEANED" "1"
+_srvmgr_cleanup() { :; }
+
+unset -f ssh_set_app_user 2>/dev/null || true
+_SSH_USER=""; _SSH_BECOME="none"; _SSH_APP_USER=""
 
 # ---------------------------------------------------------------------------
 section_t "remote payload syntax lint (bash -n on everything we send)"
 LINTFAIL=0
 lint() { local tmp; tmp="$(mktemp)"; cat > "$tmp"; if ! bash -n "$tmp" 2>/tmp/srvmgr-lint.err; then echo "  FAIL lint $CUR"; cat /tmp/srvmgr-lint.err; LINTFAIL=1; fi; rm -f "$tmp"; }
 ssh_script()  { [ "${1:-}" = "--sudo" ] && shift; lint; }
+ssh_app_script() { lint; }
 ssh_exec()    { printf '%s\n' "$1" | lint; }
 ssh_sudo()    { printf '%s\n' "$1" | lint; }
 ssh_app_exec(){ printf '%s\n' "$2" | lint; }
