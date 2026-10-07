@@ -15,7 +15,7 @@ _CONFIG_SCHEMA=(
   "default_server|Default server|general|string"
   "git_author_name|Git author name|git|string"
   "git_author_email|Git author email|git|string"
-  "github_token|GitHub token (for pull requests)|git|secret"
+  "github_token|GitHub token (pull requests, private repos and Composer packages)|git|secret"
   "git_default_base|Default PR base branch|git|string"
   "notify_slack_url|Slack incoming-webhook URL|notifications|string"
   "notify_telegram_token|Telegram bot token|notifications|secret"

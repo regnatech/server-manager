@@ -590,6 +590,16 @@ _audit_add fail2ban medium 1 "f2b" t d r 2>/dev/null
 t_eq "fixall: 2 fixable ids"  "${#_AUDIT_FIX_IDS[@]}" 2
 t_eq "fixall: ids in order"   "${_AUDIT_FIX_IDS[*]}" "firewall fail2ban"
 
+# composer gets the github_token as COMPOSER_AUTH, only for that command.
+CA_ON="$(global_get() { [ "$1" = github_token ] && printf 'ghp_Test123'; }; ssh_app_exec() { printf '%s' "$2"; }; deploy_composer /a)"
+t_true  "composer auth: exported when a token is set"      grep -qF "export COMPOSER_AUTH='{\"github-oauth\":{\"github.com\":\"ghp_Test123\"}}'" <<<"$CA_ON"
+t_true  "composer auth: still installs"                    grep -q 'install --no-dev --prefer-dist' <<<"$CA_ON"
+t_true  "composer auth: lints"                             bash -n <(printf '%s\n' "$CA_ON")
+CA_OFF="$(global_get() { return 0; }; ssh_app_exec() { printf '%s' "$2"; }; deploy_composer /a)"
+t_false "composer auth: nothing without a token"           grep -q 'COMPOSER_AUTH' <<<"$CA_OFF"
+CA_BAD="$(global_get() { printf 'bad"token'; }; ssh_app_exec() { printf '%s' "$2"; }; deploy_composer /a 2>/dev/null)"
+t_false "composer auth: odd token never reaches the shell" grep -q 'COMPOSER_AUTH' <<<"$CA_BAD"
+
 # ---------------------------------------------------------------------------
 printf '\n────────────────────────────\n'
 printf 'RESULT: %d passed, %d failed\n' "$PASS" "$FAIL"
