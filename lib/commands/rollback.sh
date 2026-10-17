@@ -73,7 +73,7 @@ cmd_rollback() {
   fi
 
   # Dependencies + caches.
-  step "Reinstalling Composer dependencies" deploy_composer "$app_root" \
+  step "Reinstalling Composer dependencies" deploy_composer "$app_root" "$php" \
     || _rollback_abort "composer install failed."
   if [[ -n "$SITE_NODE_PM" ]]; then
     step "Rebuilding frontend (${SITE_NODE_PM})" deploy_node "$app_root" "$SITE_NODE_PM" || warn "Frontend build reported a problem."

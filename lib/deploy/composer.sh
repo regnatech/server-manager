@@ -21,16 +21,23 @@ _deploy_composer_auth() {
   printf '{"github-oauth":{"github.com":"%s"}}' "$tok"
 }
 
-# deploy_composer <app_root> — install if composer.json is present.
+# deploy_composer <app_root> [php_version] — install if composer.json is present.
+# Composer runs on the site's PHP (php8.4 …), not on the server default: with two
+# versions installed, `composer` alone checks the platform against whatever
+# /usr/bin/php points to, and a lock that needs 8.4 fails on a host whose
+# default is still 8.3.
 deploy_composer() {
-  local app_root="$1" auth env=""
+  local app_root="$1" ver="${2:-}" auth env="" php_prelude=""
+  [[ -n "$ver" ]] && php_prelude="$(_php_bin_prelude "$ver")"
   auth="$(_deploy_composer_auth)"
   [[ -n "$auth" ]] && env="export COMPOSER_AUTH=$(shq "$auth")
 "
   ssh_app_exec "$app_root" "$env"'
     if [ ! -f composer.json ]; then echo "no composer.json — skipping"; exit 0; fi
-    if command -v composer >/dev/null 2>&1; then COMPOSER=composer;
-    elif [ -f composer.phar ]; then COMPOSER="php composer.phar";
+    '"$php_prelude"'
+    if [ -n "${PHP:-}" ] && command -v composer >/dev/null 2>&1; then COMPOSER="$PHP $(command -v composer)";
+    elif command -v composer >/dev/null 2>&1; then COMPOSER=composer;
+    elif [ -f composer.phar ]; then COMPOSER="${PHP:-php} composer.phar";
     else echo "composer not found on PATH" >&2; exit 1; fi
     # -1 disables the memory limit: large dependency graphs otherwise OOM with
     # "Allowed memory size ... exhausted". Cheap to set unconditionally.

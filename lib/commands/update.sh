@@ -94,7 +94,7 @@ cmd_update() {
   # 7. Composer. Self-healing: if the step fails (e.g. composer missing), install
   #    the toolchain and retry once before giving up.
   _deploy_try "Installing Composer dependencies" _diagnose_composer \
-      -- deploy_composer "$app_root" \
+      -- deploy_composer "$app_root" "$php" \
     || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "composer install failed."
 
   # 7b. Auto-wire production services for Laravel/Symfony: scheduler + workers,

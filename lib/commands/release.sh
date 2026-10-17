@@ -138,7 +138,7 @@ for s in ${_RELEASE_SHARED[*]}; do rm -rf "\$rel/\$s"; ln -sfn "\$root/shared/\$
 EOF
 
   # Reuse the normal build steps, pointed at the new release dir.
-  _deploy_try "Installing Composer dependencies" _diagnose_composer -- deploy_composer "$rel" \
+  _deploy_try "Installing Composer dependencies" _diagnose_composer -- deploy_composer "$rel" "$SITE_PHP_VERSION" \
     || die "composer install failed."
   _deploy_try "Building frontend${SITE_NODE_PM:+ (${SITE_NODE_PM})}" _diagnose_node -- deploy_node "$rel" "$SITE_NODE_PM" || die "Frontend build failed."
   if _is_laravel_like "$SITE_FRAMEWORK"; then

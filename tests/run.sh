@@ -600,6 +600,14 @@ t_false "composer auth: nothing without a token"           grep -q 'COMPOSER_AUT
 CA_BAD="$(global_get() { printf 'bad"token'; }; ssh_app_exec() { printf '%s' "$2"; }; deploy_composer /a 2>/dev/null)"
 t_false "composer auth: odd token never reaches the shell" grep -q 'COMPOSER_AUTH' <<<"$CA_BAD"
 
+# composer runs on the site's PHP when a version is given, else on the default.
+CV_ON="$(global_get() { return 0; }; ssh_app_exec() { printf '%s' "$2"; }; deploy_composer /a 8.4)"
+t_true  "composer php: picks php8.4 when present"           grep -qF 'command -v php8.4' <<<"$CV_ON"
+t_true  "composer php: runs composer through \$PHP"         grep -qF 'COMPOSER="$PHP $(command -v composer)"' <<<"$CV_ON"
+t_true  "composer php: lints"                               bash -n <(printf '%s\n' "$CV_ON")
+CV_OFF="$(global_get() { return 0; }; ssh_app_exec() { printf '%s' "$2"; }; deploy_composer /a)"
+t_false "composer php: no version, no prelude"              grep -qF 'command -v php8' <<<"$CV_OFF"
+
 # ---------------------------------------------------------------------------
 printf '\n────────────────────────────\n'
 printf 'RESULT: %d passed, %d failed\n' "$PASS" "$FAIL"
