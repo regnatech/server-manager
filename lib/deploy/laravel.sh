@@ -32,6 +32,15 @@ deploy_laravel_migrate() {
   ssh_app_exec "$app_root" "$(_php_bin_prelude "$ver") \$PHP artisan migrate --force"
 }
 
+# deploy_laravel_storage_link <app_root> <php_version>
+#   Create public/storage -> storage/app/public. It is never in git, so a fresh
+#   clone or a new release has none and every uploaded file 404s. Idempotent:
+#   artisan skips a link that already exists.
+deploy_laravel_storage_link() {
+  local app_root="$1" ver="$2"
+  ssh_app_exec "$app_root" "$(_php_bin_prelude "$ver") \$PHP artisan storage:link --no-interaction"
+}
+
 # deploy_laravel_optimize <app_root> <php_version>
 #   Clear then rebuild all caches (config/route/view/event).
 deploy_laravel_optimize() {

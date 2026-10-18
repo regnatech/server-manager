@@ -143,6 +143,8 @@ EOF
   _deploy_try "Building frontend${SITE_NODE_PM:+ (${SITE_NODE_PM})}" _diagnose_node -- deploy_node "$rel" "$SITE_NODE_PM" || die "Frontend build failed."
   if _is_laravel_like "$SITE_FRAMEWORK"; then
     step "Running migrations" deploy_laravel_migrate "$rel" "$SITE_PHP_VERSION" || die "Migrations failed."
+    step "Linking public storage" deploy_laravel_storage_link "$rel" "$SITE_PHP_VERSION" \
+      || warn "storage:link reported a problem: uploaded files may not be served."
   elif [[ "$SITE_FRAMEWORK" == symfony ]]; then
     step "Running migrations" deploy_symfony_migrate "$rel" "$SITE_PHP_VERSION" || die "Migrations failed."
     step "Warming cache" deploy_symfony_cache "$rel" "$SITE_PHP_VERSION" || warn "Cache warmup reported a problem."

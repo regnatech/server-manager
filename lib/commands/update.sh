@@ -118,6 +118,8 @@ cmd_update() {
   if _is_laravel_like "$fw"; then
     step "Running migrations" deploy_laravel_migrate "$app_root" "$php" \
       || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Migrations failed."
+    step "Linking public storage" deploy_laravel_storage_link "$app_root" "$php" \
+      || warn "storage:link reported a problem: uploaded files may not be served."
     step "Rebuilding caches" deploy_laravel_optimize "$app_root" "$php" \
       || _update_abort "$domain" "$ts" "$sha_before" "$sha_after" "$backup_dir" "Cache rebuild failed."
   elif [[ "$fw" == symfony ]]; then

@@ -252,6 +252,7 @@ CUR=node;       deploy_node /a pnpm >/dev/null 2>&1 || true
 CUR=down;       deploy_laravel_down /a 8.3 >/dev/null 2>&1 || true
 CUR=up;         deploy_laravel_up /a 8.3 >/dev/null 2>&1 || true
 CUR=migrate;    deploy_laravel_migrate /a 8.3 >/dev/null 2>&1 || true
+CUR=storagelink; deploy_laravel_storage_link /a 8.3 >/dev/null 2>&1 || true
 CUR=optimize;   deploy_laravel_optimize /a 8.3 >/dev/null 2>&1 || true
 CUR=fpm;        deploy_restart_php_fpm 8.3 >/dev/null 2>&1 || true
 CUR=sup;        deploy_restart_supervisor >/dev/null 2>&1 || true
